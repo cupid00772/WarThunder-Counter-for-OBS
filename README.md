@@ -2,6 +2,8 @@
 
 這是一個專為 [War Thunder (戰爭雷霆)](https://warthunder.com/) 設計的 OBS 實況計數器 Overlay。利用遊戲內建的 HTTP API (`http://localhost:8111`) 即時讀取 HUD 訊息（右下角擊殺紀錄），實現自動追蹤「擊殺數 (Kills)」與「核彈數 (Nukes)」。
 
+注意:擊殺數會計算友軍擊殺(目前無解，8111端口不會提供擊殺者陣營資訊，若有辦法解決，請告知)。
+
 ## 專案架構與檔案說明
 
 專案由三個主要檔案組成，採用純前端技術 (Vanilla JS, HTML, CSS)，不需安裝 Node.js，可直接作為 OBS 的「瀏覽器來源 (Browser Source)」使用。
@@ -41,8 +43,8 @@
 ## 如何使用 / 開發測試
 
 1.  **實況主使用**：
-    在 OBS 新增一個「瀏覽器來源」，勾選「本機檔案」，選擇 `index.html`。
-    URL 參數範例（如果你是架設在 Server 上）：
-    `http://localhost/Nuke_Counter_obs/index.html?player=你的遊戲ID&keyword=Doomsday!`
+    * Step1: 下載專案
+    * Step2: 在 OBS 新增一個「瀏覽器來源」，勾選「本機檔案」，選擇 `index.html`(其他設定預設就好)。
+    * Step3: 在 `nuke.counter.js` 修改 `DEFAULT_PLAYER` 為你的遊戲ID。
 2.  **開發測試**：
     開發時因為 CORS 限制與跨網域問題，建議在專案目錄下啟動一個簡易的 HTTP Server（例如：`python -m http.server 8080`），然後用瀏覽器開啟 `http://localhost:8080/index.html`，並開啟開發者工具 (F12) 觀看 `[NukeCounter]` 開頭的 Console Logs 以利除錯。
