@@ -1,0 +1,294 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Inter:wght@400;600&display=swap');
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background: transparent;
+    /* Inter for clean Apple-like labels, Chakra Petch for War Thunder-like tech numbers */
+    font-family: 'Inter', sans-serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.shell {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    min-width: 320px;
+    padding: 18px;
+    
+    /* Apple Glassmorphism Effect - Optimized for OBS to avoid roughness */
+    background: rgba(20, 24, 28, 0.85);
+    
+    /* Apple style smooth rounded corners and border */
+    border-radius: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.4),
+        inset 0 1px 1px rgba(255, 255, 255, 0.1);
+    
+    color: #ffffff;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+}
+
+.metric {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 18px 24px;
+    
+    /* Inner glass effect base */
+    background-color: rgba(0, 0, 0, 0.4);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    
+    transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), filter 0.3s ease;
+}
+
+.metric:hover {
+    transform: scale(1.02);
+    filter: brightness(1.25);
+}
+
+.label {
+    font-size: 0.9rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 700;
+    margin-bottom: 8px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+}
+
+.count, .count-side {
+    margin: 0;
+    /* War Thunder tech/military font for the numbers */
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 2.8rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: #ffffff;
+    text-shadow: 0 2px 8px rgba(0,0,0,1);
+}
+
+/* Kills Blocks Background (1st & 3rd) */
+.metric:nth-child(1), .metric:nth-child(3) {
+    background-image: 
+        linear-gradient(to bottom, rgba(15, 20, 25, 0.65), rgba(10, 15, 20, 0.85)),
+        url('./kill_bg.png');
+    background-size: cover;
+    background-position: center;
+}
+
+/* Nuke Blocks Background (2nd & 4th) */
+.metric:nth-child(2), .metric:nth-child(4) {
+    background-image: 
+        linear-gradient(to bottom, rgba(25, 10, 10, 0.65), rgba(20, 5, 5, 0.85)),
+        url('./nuke_bg.png');
+    background-size: cover;
+    background-position: center;
+}
+
+/* War Thunder style accents (Orange, Red, White, Yellow) */
+.metric:nth-child(1) .count {
+    color: #e6e6e6; /* Silver/White for Total Kills */
+}
+
+.metric:nth-child(2) .count {
+    color: #ff4747; /* WT Red for Total Nukes */
+    text-shadow: 0 0 12px rgba(255, 71, 71, 0.6), 0 2px 4px rgba(0,0,0,0.9);
+}
+
+.metric:nth-child(3) .count-side {
+    color: #ff9d00; /* WT Orange for Today Kills */
+    text-shadow: 0 0 12px rgba(255, 157, 0, 0.6), 0 2px 4px rgba(0,0,0,0.9);
+}
+
+.metric:nth-child(4) .count-side {
+    color: #ffd700; /* WT Yellow/Gold for Today Nukes */
+    text-shadow: 0 0 12px rgba(255, 215, 0, 0.6), 0 2px 4px rgba(0,0,0,0.9);
+}
+
+/* Floating Animations */
+.floating-text {
+    position: absolute;
+    /* 位置改成可調整的 CSS 變數，方便固定在指定座標 */
+    left: var(--floating-left, auto);
+    right: var(--floating-right, 15px);
+    top: var(--floating-top, 50%);
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 2.2rem;
+    font-weight: 700;
+    opacity: 0;
+    pointer-events: none;
+    /* 👇 這裡的 3.0s 是動畫的總持續時間，若要改長短，請同步修改 nuke_counter.js 的時間 */
+    animation: floatUp 5.0s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.floating-text.kill-anim {
+    color: #ff9d00;
+    text-shadow: 0 0 15px #ff9d00, 0 2px 5px #000;
+}
+
+.floating-text.nuke-anim {
+    color: #ff4747;
+    text-shadow: 0 0 20px #ff4747, 0 2px 5px #000;
+    /* 固定在一點時，讓動畫只做縮放/淡出，不再往上飄 */
+    left: var(--nuke-left, auto);
+    right: auto;
+    top: var(--nuke-top, 50%);
+}
+
+.nuke-text-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nuke-plus-one {
+    white-space: nowrap;
+}
+
+.nuke-gif-wrap {
+    position: absolute;
+    left: var(--nuke-gif-left, var(--nuke-left, auto));
+    top: var(--nuke-gif-top, var(--nuke-top, 50%));
+    transform: translate(var(--nuke-gif-offset-x, -90px), var(--nuke-gif-offset-y, -20px));
+    pointer-events: none;
+}
+
+.nuke-gif {
+    /* 👇 這裡可以調整 GIF 的大小 */
+    width: 150px;
+    height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 0 8px rgba(255, 71, 71, 0.8));
+}
+
+@keyframes floatUp {
+    0% {
+        opacity: 0;
+        transform: translateY(0) scale(0.5);
+    }
+    15% {
+        opacity: 1;
+        transform: translateY(0) scale(1.3);
+    }
+    100% {
+        opacity: 0;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (max-width: 380px) {
+    .shell {
+        min-width: 280px;
+        border-radius: 24px;
+        padding: 14px;
+    }
+    .count, .count-side {
+        font-size: 1.8rem;
+    }
+    .metric {
+        border-radius: 16px;
+    }
+}
+
+/* Modal Styling */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: #1a1e24;
+    padding: 24px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    width: 280px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+}
+
+.modal-content h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+    text-align: center;
+}
+
+.input-group {
+    margin-bottom: 16px;
+}
+
+.input-group label {
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+    color: #ccc;
+}
+
+.input-group input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: #0f1216;
+    color: #fff;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 1.2rem;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 24px;
+}
+
+.modal-actions button {
+    flex: 1;
+    padding: 10px;
+    margin: 0 5px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+
+#btn-save {
+    background: #ff9d00;
+    color: #000;
+}
+#btn-save:hover {
+    background: #ffaa22;
+}
+
+#btn-cancel {
+    background: #444;
+    color: #fff;
+}
+#btn-cancel:hover {
+    background: #555;
+}
