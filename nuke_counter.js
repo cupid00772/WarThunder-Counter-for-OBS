@@ -32,15 +32,15 @@
     // All known War Thunder action verbs that indicate a kill/damage event
     const ACTION_KEYWORDS = [
         // English
-        "destroyed", "shot down", "set afire", "has crashed",
+        "destroyed", "shot down", "has crashed",
         // German
-        "zerstört", "abgeschossen", "in Brand gesetzt",
+        "zerstört", "abgeschossen",
         // French
-        "détruit", "abattu", "a mis le feu",
+        "détruit", "abattu",
         // Russian
-        "уничтожен", "сбит", "поджёг",
+        "уничтожен", "сбит",
         // Chinese
-        "摧毀", "擊落", "點燃了",
+        "摧毀", "擊落",
         // Czech
         "zničil", "sestřelil",
         // Polish
@@ -48,9 +48,9 @@
         // Romanian
         "distrus", "doborât",
         // Italian
-        "distrutto", "abbattuto", "incendiato",
+        "distrutto", "abbattuto",
         // Portuguese
-        "destruído", "abatido", "incendiou",
+        "destruído", "abatido",
         // Korean
         "격파", "격추",
         // Serbian
