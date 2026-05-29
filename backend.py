@@ -299,7 +299,7 @@ def tracker_loop():
                             continue
 
                         if nuke_keyword in msg:
-                            if not nuke_triggered and (now - last_nuke_time) > 10.0:
+                            if not nuke_triggered:
                                 app_state["totalNukes"] += 1
                                 app_state["todayNukes"] += 1
                                 nuke_triggered = True
