@@ -1,51 +1,52 @@
 # War Thunder Nuke & Kill Counter (OBS Overlay)
 
-這是一個專為 [War Thunder (戰爭雷霆)](https://warthunder.com/) 設計的 OBS 實況計數器 Overlay。利用遊戲內建的 HTTP API (`http://localhost:8111`) 即時讀取 HUD 訊息（右下角擊殺紀錄），實現自動追蹤「擊殺數 (Kills)」與「核彈數 (Nukes)」。
+這是一個專為 [War Thunder (戰爭雷霆)](https://warthunder.com/) 設計的 OBS 實況計數器 Overlay。利用遊戲內建的 HTTP API (`http://localhost:8111`) 即時讀取 HUD 訊息（右下角擊殺紀錄），實現自動追蹤「擊殺數 (Kills)」、「死亡數 (Deaths)」與「核彈數 (Nukes)」，並能自動計算顯示 K/D 值。
 
-注意:擊殺數會計算友軍擊殺(目前無解，8111端口不會提供擊殺者陣營資訊，若有辦法解決，請告知)。
+注意：擊殺數在自定義戰鬥(Custom Battles)會計算友軍擊殺 (目前無解，8111 端口不會提供擊殺者陣營資訊，若有辦法解決，請告知)。
+但不知道為何一般戰鬥則不會計算友軍擊殺，請有能力的開發者告知原因。
 
 ## 專案架構與檔案說明
 
-專案由三個主要檔案組成，採用純前端技術 (Vanilla JS, HTML, CSS)，不需安裝 Node.js，可直接作為 OBS 的「瀏覽器來源 (Browser Source)」使用。
+本專案採用 **Python 後端 + 前端分離** 的架構，以解決跨網域 (CORS) 限制與狀態同步問題。
 
-### 1. `index.html` (UI 結構)
-*   **介面佈局 (Shell & Grid)**：包含四個主要的資料區塊（Total Kills, Total Nukes, Today Kills, Today Nukes）。
-*   **手動修改視窗 (Edit Modal)**：一個隱藏的彈出視窗。為了防範 API 偶爾無法精準判定 Teamkill (TK) 的情況，實況主可以在網頁上「連點兩下」來開啟這個視窗，手動校正目前的累積擊殺與核彈數。
+### 1. 啟動腳本 (VBScript)
+*   **`Start_Tracker.vbs`**：(必備) 啟動背景計數器 `backend.py`。它會隱藏視窗默默執行，負責與遊戲 API 溝通並記錄數據。建議將此捷徑加入開機自動啟動 (`shell:startup`)。
+*   **`Start_Display.vbs`**：(選用) 如果你不想開 OBS，只需雙擊此腳本，就會自動呼叫 Chrome/Edge 開啟一個乾淨的獨立小視窗來顯示計數器。
 
-### 2. `style.css` (外觀與動畫)
-*   **視覺風格**：採用 Apple Glassmorphism (毛玻璃) 搭配 War Thunder 軍武科技風格 (字體使用 `Chakra Petch`)。
-*   **動畫效果 (Animations)**：
-    *   **Combo 動畫**：定義了 `.floating-text` 與 `@keyframes floatUp`。
-    *   **Nuclear 動畫**：除了數字跳動，還支援呼叫同目錄下的 `explosion.gif` 作為核彈爆發的視覺反饋。
+### 2. 前端介面 (HTML / CSS / JS)
+分為兩個獨立的介面，可依個人需求加入 OBS 中：
+*   **`index.html`**：顯示 **總計 (Total)** 數據。包含「總 K/D」、「Total Kills」、「Total Nukes」。
+*   **`today.html`**：顯示 **今日 (Today)** 數據。包含「Today's K/D」、「Today Kills」、「Today Nukes」。
+*   **`style.css`**：外觀風格，採用 Apple Glassmorphism (毛玻璃) 搭配軍武科技風格。
+*   **`nuke_counter.js`**：前端核心邏輯，負責向後端 (`http://127.0.0.1:8112`) 抓取數據、觸發連殺文字疊加動畫與核彈特效。
 
-### 3. `nuke_counter.js` (核心邏輯)
+### 3. 後端邏輯 (`backend.py`)
+這是整個專案的資料核心：
+*   **資料解析與儲存**：不斷向遊戲 API 索取資料，過濾出屬於你的擊殺與死亡事件，並儲存在本地的 `state.json` 中。
+*   **自動換日**：內建換日機制，跨日時會自動將 `todayKills`、`todayDeaths`、`todayNukes` 歸零。
+*   **資料伺服器**：在 `http://127.0.0.1:8112` 開啟小型伺服器，讓多個前端網頁 (OBS 或獨立視窗) 可以同時讀取並保持完美的數據同步。
 
-這是整個專案的核心，負責與 War Thunder API 溝通、資料解析與本地儲存。
+## 核心機制解析 (For Developers)
 
-#### 核心機制解析 (For Developers)
-
-1.  **狀態保存 (LocalStorage)**
-    *   `state` 物件負責記錄 `totalKills`, `totalNukes`, `lastDmg` 等資訊。
-    *   `rotateDailyStats(state)`: 每次輪詢時檢查日期是否跨日（`dayKey`），若跨日則自動將 `todayKills` 與 `todayNukes` 歸零。
-2.  **API 輪詢與資料擷取 (Polling)**
-    *   透過 `fetchHUD` 不斷向 `http://localhost:8111/hudmsg?lastEvt={X}&lastDmg={Y}` 發送 GET 請求。
-    *   **防呆重置機制**：如果收到連續 5 次以上的空回應，且 `lastDmg` 的數字異常巨大（>10000），這通常是因為 Mock Server 切換或遊戲重開導致的 API ID 錯亂。此時程式會自動將 `lastDmg` 歸零以恢復正常抓取。
-3.  **擊殺判定邏輯 (`isOwnedKillEvent`)**
-    *   **動詞過濾 (`ACTION_KEYWORDS`)**：因為不同語系的客戶端會有不同的擊殺字眼，程式內建了涵蓋英、法、德、俄、中等多國語言的動詞陣列（如 `"destroyed"`, `"set afire"`, `"摧毀"` 等）。只要 `msg` 包含這些字眼即視為有效擊殺。
-    *   **過濾自殺與核彈廣播**：自動忽略 `"has been wrecked"`, `"has crashed"`，以及觸發核彈的關鍵字（避免將核彈警報誤判為擊殺）。
-    *   **玩家比對 (`extractKillerName`)**：自動切除 `(F-15E)` 等載具標籤，擷取出純粹的玩家 ID，並與 URL 參數指定的玩家名稱進行比對，藉此過濾出屬於該玩家的擊殺。
-    *   *已知限制：War Thunder 的 API 並不提供擊殺的陣營資訊 (Team Data)，因此 Teamkill (殺死隊友) 依然會被判定為擊殺。若發生 TK 需依靠手動修改功能校正。*
-4.  **連殺疊加系統 (Kill Combo System)**
-    *   由 `triggerKillCombo(count)` 負責。
-    *   **機制**：當偵測到擊殺時，會浮現 `+1 KILL`。如果在接下來的 **5 秒內** 又偵測到擊殺，系統**不會**產生新的文字重疊，而是會將原有的文字更新為 `+N KILL` (例如 `+3 KILL`)。
-    *   更新文字的同時，利用 `void activeKillAnimEl.offsetWidth;` 強制觸發 CSS reflow (重繪)，讓浮動動畫可以重新播放（彈跳感），並重置 5 秒的消除計時器。
+1.  **擊殺與死亡判定**：
+    *   **動詞過濾 (`ACTION_KEYWORDS`)**：程式內建涵蓋多國語言的動詞陣列（如 `"destroyed"`, `"摧毀"` 等）。
+    *   **過濾機制**：自殺、撞毀 (`has crashed`) 以及核彈廣播關鍵字會被排除在擊殺之外，但會被正確計入「死亡數」以供 K/D 計算。當 K/D 為 0 時，會自動顯示為 `NaN`。
+    *   **玩家比對 (`extractKillerName`)**：自動切除 `(F-15E)` 等載具標籤，擷取出純粹的玩家 ID 進行比對。
+2.  **連殺疊加系統 (Kill Combo System)**：
+    *   當偵測到擊殺時，會浮現 `+1 KILL`。如果在接下來的 **5 秒內** 又偵測到擊殺，系統**不會**產生新的文字重疊，而是會將原有的文字更新為 `+N KILL` (例如 `+3 KILL`) 並重新觸發彈跳動畫。
+3.  **手動校正 (Edit Modal)**：
+    *   由於 API 無法判斷 TK (Teamkill)，或是偶爾有漏算情況，你可以在任何一個計數器畫面上 **連續點擊滑鼠兩下** 開啟隱藏的編輯視窗。修改完成並按下儲存後，數據會直接送回 `backend.py` 保存，並立刻同步到所有畫面上。
 
 ## 如何使用 / 開發測試
 
 1.  **實況主使用**：
-    * Step1: 下載專案
-    * Step2: 在 OBS 新增一個「瀏覽器來源」，勾選「本機檔案」，選擇 `index.html`(其他設定預設就好)。
-    * Step3: 在 `nuke.counter.js` 修改 `DEFAULT_PLAYER` 為你的遊戲ID。
-    * Step4: 手動校正：需自行設定數值，請將鼠標懸停在計數器上，連續點擊兩下，輸入正確數字後按下確定，即可完成手動修正。
+    *   **Step 1**: 在 `config.json` 裡面設定你的遊戲 ID (`player_name`)。
+    *   **Step 2**: 執行 `Start_Tracker.vbs` 來啟動背景計數器 (建議加入開機自啟動)。
+    *   **Step 3**: 在 OBS 中新增「瀏覽器來源」，勾選「本機檔案」。
+        *   如果你想顯示總計數據，請選擇 `index.html`。
+        *   如果你想顯示今日數據，請選擇 `today.html`。
+        *   (你可以同時加入這兩個檔案，它們的數據會完美同步！)
+    *   **Step 4**: (手動校正) 需自行設定數值時，請將滑鼠移至計數器畫面上，連續點擊兩下開啟修改視窗，修改儲存後即刻生效。
+
 2.  **開發測試**：
-    開發時因為 CORS 限制與跨網域問題，建議在專案目錄下啟動一個簡易的 HTTP Server（例如：`python -m http.server 8080`），然後用瀏覽器開啟 `http://localhost:8080/index.html`，並開啟開發者工具 (F12) 觀看 `[NukeCounter]` 開頭的 Console Logs 以利除錯。
+    *   若需進行除錯，可以將 `config.json` 中的 `"debug"` 設為 `true`，後端會在目錄下產生 `debug_kills.log`，記錄每一筆解析過的戰鬥訊息，方便比對哪一行擊殺或死亡沒有被正確判斷。

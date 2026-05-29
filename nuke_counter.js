@@ -276,8 +276,11 @@
         setTextAndScale(TOTAL_DEATH_ID, formatValue(totalDeaths));
         setTextAndScale(TODAY_DEATH_ID, formatValue(todayDeaths));
 
-        const totalKD = totalDeaths > 0 ? (state.totalKills / totalDeaths).toFixed(2) : state.totalKills.toFixed(2);
-        const todayKD = todayDeaths > 0 ? (state.todayKills / todayDeaths).toFixed(2) : state.todayKills.toFixed(2);
+        let totalKDValue = totalDeaths > 0 ? (state.totalKills / totalDeaths) : state.totalKills;
+        let todayKDValue = todayDeaths > 0 ? (state.todayKills / todayDeaths) : state.todayKills;
+
+        const totalKD = totalKDValue === 0 ? "NaN" : totalKDValue.toFixed(2);
+        const todayKD = todayKDValue === 0 ? "NaN" : todayKDValue.toFixed(2);
         setTextAndScale(TOTAL_KD_ID, totalKD);
         setTextAndScale(TODAY_KD_ID, todayKD);
     }
