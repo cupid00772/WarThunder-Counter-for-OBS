@@ -71,6 +71,8 @@ def default_state():
         "todayNukes": 0,
         "totalKills": 0,
         "todayKills": 0,
+        "totalDeaths": 0,
+        "todayDeaths": 0,
         "lastDmg": 0,
         "lastEvt": 0,
     }
@@ -109,6 +111,7 @@ def rotate_daily_stats(state):
         state["dayKey"] = current
         state["todayNukes"] = 0
         state["todayKills"] = 0
+        state["todayDeaths"] = 0
         return True
     return False
 
@@ -133,6 +136,27 @@ def extract_killer_name(msg):
             return before
     return None
 
+def extract_victim_name(msg):
+    if "has been wrecked" in msg or "has crashed" in msg:
+        idx = msg.find("has been wrecked")
+        if idx == -1:
+            idx = msg.find("has crashed")
+        before = msg[:idx].strip()
+        v_start = before.rfind("(")
+        if v_start >= 0:
+            return before[:v_start].strip()
+        return before
+
+    for keyword in ACTION_KEYWORDS:
+        idx = msg.find(keyword)
+        if idx >= 0:
+            after = msg[idx + len(keyword):].strip()
+            v_start = after.rfind("(")
+            if v_start >= 0:
+                return after[:v_start].strip()
+            return after
+    return None
+
 def is_owned_kill_event(entry, nuke_keyword, player_name):
     msg = entry.get("msg")
     if not isinstance(msg, str):
@@ -154,6 +178,19 @@ def is_owned_kill_event(entry, nuke_keyword, player_name):
     if killer and matches_player_name(killer, player_name):
         return True
         
+    return False
+
+def is_owned_death_event(entry, nuke_keyword, player_name):
+    msg = entry.get("msg")
+    if not isinstance(msg, str):
+        return False
+    if nuke_keyword in msg:
+        return False
+
+    victim = extract_victim_name(msg)
+    if victim and matches_player_name(victim, player_name):
+        return True
+
     return False
 
 # Global state
@@ -314,10 +351,15 @@ def tracker_loop():
                                 if parsed > 0:
                                     kill_count = parsed
 
-                            app_state["totalKills"] += kill_count
-                            app_state["todayKills"] += kill_count
+                            app_state["totalKills"] = app_state.get("totalKills", 0) + kill_count
+                            app_state["todayKills"] = app_state.get("todayKills", 0) + kill_count
 
-                        _debug_log(f"id={eid} counted={owned} +{kill_count if owned else 0} | {msg}")
+                        died = is_owned_death_event(entry, nuke_keyword, player_name)
+                        if died:
+                            app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
+                            app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
+
+                        _debug_log(f"id={eid} counted={owned} died={died} | {msg}")
 
                     # cursor 留 margin:不要直接跳到 max_id,而是退回 DMG_REFETCH_MARGIN,
                     # 讓晚到/亂序、id 較小的擊殺訊息下一輪還抓得到 (去重防重複)。
@@ -374,6 +416,10 @@ class StateHandler(BaseHTTPRequestHandler):
                     app_state["todayKills"] = new_state["todayKills"]
                 if "todayNukes" in new_state:
                     app_state["todayNukes"] = new_state["todayNukes"]
+                if "totalDeaths" in new_state:
+                    app_state["totalDeaths"] = new_state["totalDeaths"]
+                if "todayDeaths" in new_state:
+                    app_state["todayDeaths"] = new_state["todayDeaths"]
                 save_state(app_state)
                 
                 self.send_response(200)

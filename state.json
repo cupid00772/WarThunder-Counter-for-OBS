@@ -2,8 +2,10 @@
   "dayKey": "2026-05-29",
   "totalNukes": 259,
   "todayNukes": 0,
-  "totalKills": 133355,
-  "todayKills": 0,
-  "lastDmg": 30,
+  "totalKills": 121995,
+  "todayKills": 80,
+  "totalDeaths": 50004,
+  "todayDeaths": 1,
+  "lastDmg": 32,
   "lastEvt": 0
 }

@@ -60,6 +60,11 @@ body {
     filter: brightness(1.25);
 }
 
+.full-width {
+    grid-column: span 2;
+    align-items: center;
+}
+
 .label {
     font-size: 0.9rem;
     letter-spacing: 0.1em;
@@ -81,8 +86,8 @@ body {
     text-shadow: 0 2px 8px rgba(0,0,0,1);
 }
 
-/* Kills Blocks Background (1st & 3rd) */
-.metric:nth-child(1), .metric:nth-child(3) {
+/* Kills Blocks Background */
+.metric.kill-metric {
     background-image: 
         linear-gradient(to bottom, rgba(15, 20, 25, 0.65), rgba(10, 15, 20, 0.85)),
         url('./kill_bg.png');
@@ -90,8 +95,28 @@ body {
     background-position: center;
 }
 
-/* Nuke Blocks Background (2nd & 4th) */
-.metric:nth-child(2), .metric:nth-child(4) {
+/* Deaths Blocks Background */
+.metric.death-metric {
+    background-image: 
+        linear-gradient(to bottom, rgba(20, 15, 15, 0.65), rgba(15, 10, 10, 0.85)),
+        url('./kill_bg.png');
+    background-size: cover;
+    background-position: center;
+    filter: grayscale(0.5); /* Makes it look duller/different from kills */
+}
+
+/* KD Blocks Background */
+.metric.kd-metric {
+    background-image: 
+        linear-gradient(to bottom, rgba(15, 25, 20, 0.65), rgba(10, 20, 15, 0.85)),
+        url('./kill_bg.png');
+    background-size: cover;
+    background-position: center;
+    filter: hue-rotate(90deg); /* Slight greenish tint */
+}
+
+/* Nuke Blocks Background */
+.metric.nuke-metric {
     background-image: 
         linear-gradient(to bottom, rgba(25, 10, 10, 0.65), rgba(20, 5, 5, 0.85)),
         url('./nuke_bg.png');
@@ -99,22 +124,30 @@ body {
     background-position: center;
 }
 
-/* War Thunder style accents (Orange, Red, White, Yellow) */
-.metric:nth-child(1) .count {
-    color: #e6e6e6; /* Silver/White for Total Kills */
-}
-
-.metric:nth-child(2) .count {
-    color: #ff4747; /* WT Red for Total Nukes */
-    text-shadow: 0 0 12px rgba(255, 71, 71, 0.6), 0 2px 4px rgba(0,0,0,0.9);
-}
-
-.metric:nth-child(3) .count-side {
+/* War Thunder style accents (Orange, Red, White, Yellow, Green) */
+.kill-metric .count { color: #e6e6e6; }
+.kill-metric .count-side {
     color: #ff9d00; /* WT Orange for Today Kills */
     text-shadow: 0 0 12px rgba(255, 157, 0, 0.6), 0 2px 4px rgba(0,0,0,0.9);
 }
 
-.metric:nth-child(4) .count-side {
+.death-metric .count { color: #e6e6e6; }
+.death-metric .count-side {
+    color: #ff6b6b; /* Soft red for deaths */
+    text-shadow: 0 0 12px rgba(255, 107, 107, 0.6), 0 2px 4px rgba(0,0,0,0.9);
+}
+
+.kd-metric .count { color: #e6e6e6; }
+.kd-metric .count-side {
+    color: #00ff88; /* Bright green for today KD */
+    text-shadow: 0 0 12px rgba(0, 255, 136, 0.6), 0 2px 4px rgba(0,0,0,0.9);
+}
+
+.nuke-metric .count {
+    color: #ff4747; /* WT Red for Total Nukes */
+    text-shadow: 0 0 12px rgba(255, 71, 71, 0.6), 0 2px 4px rgba(0,0,0,0.9);
+}
+.nuke-metric .count-side {
     color: #ffd700; /* WT Yellow/Gold for Today Nukes */
     text-shadow: 0 0 12px rgba(255, 215, 0, 0.6), 0 2px 4px rgba(0,0,0,0.9);
 }

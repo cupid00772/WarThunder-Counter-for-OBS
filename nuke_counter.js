@@ -4,6 +4,10 @@
     const TOTAL_NUKE_ID = "total-nuke";
     const TODAY_KILL_ID = "today-kill";
     const TODAY_NUKE_ID = "today-nuke";
+    const TOTAL_DEATH_ID = "total-death";
+    const TODAY_DEATH_ID = "today-death";
+    const TOTAL_KD_ID = "total-kd";
+    const TODAY_KD_ID = "today-kd";
 
     const STORAGE_STATE = "thunder_overlay.nuke_counter.state";
     const LEGACY_STORAGE_COUNT = "thunder_overlay.nuke_counter.count";
@@ -83,6 +87,8 @@
             todayNukes: 0,
             totalKills: 0,
             todayKills: 0,
+            totalDeaths: 0,
+            todayDeaths: 0,
             lastDmg: 0,
             lastEvt: 0,
         };
@@ -102,6 +108,8 @@
                     todayNukes: readNumber(String(parsed.todayNukes ?? ""), base.todayNukes),
                     totalKills: readNumber(String(parsed.totalKills ?? ""), base.totalKills),
                     todayKills: readNumber(String(parsed.todayKills ?? ""), base.todayKills),
+                    totalDeaths: readNumber(String(parsed.totalDeaths ?? ""), base.totalDeaths),
+                    todayDeaths: readNumber(String(parsed.todayDeaths ?? ""), base.todayDeaths),
                     lastDmg: readNumber(String(parsed.lastDmg ?? ""), base.lastDmg),
                     lastEvt: readNumber(String(parsed.lastEvt ?? ""), base.lastEvt),
                 };
@@ -128,6 +136,7 @@
             state.dayKey = currentDay;
             state.todayNukes = 0;
             state.todayKills = 0;
+            state.todayDeaths = 0;
         }
     }
 
@@ -261,6 +270,16 @@
         setTextAndScale(TODAY_KILL_ID, formatValue(state.todayKills));
         setTextAndScale(TOTAL_NUKE_ID, formatValue(state.totalNukes));
         setTextAndScale(TODAY_NUKE_ID, formatValue(state.todayNukes));
+
+        const totalDeaths = state.totalDeaths || 0;
+        const todayDeaths = state.todayDeaths || 0;
+        setTextAndScale(TOTAL_DEATH_ID, formatValue(totalDeaths));
+        setTextAndScale(TODAY_DEATH_ID, formatValue(todayDeaths));
+
+        const totalKD = totalDeaths > 0 ? (state.totalKills / totalDeaths).toFixed(2) : state.totalKills.toFixed(2);
+        const todayKD = todayDeaths > 0 ? (state.todayKills / todayDeaths).toFixed(2) : state.todayKills.toFixed(2);
+        setTextAndScale(TOTAL_KD_ID, totalKD);
+        setTextAndScale(TODAY_KD_ID, todayKD);
     }
 
     // 動畫觸發函數 - 專門處理核彈動畫
@@ -436,36 +455,55 @@
         if (typeof window === "undefined") return;
 
         const modal = document.getElementById('edit-modal');
+        const inputTodayKills = document.getElementById('input-today-kills');
+        const inputTotalDeaths = document.getElementById('input-total-deaths');
         const inputTotalKills = document.getElementById('input-total-kills');
         const inputTotalNukes = document.getElementById('input-total-nukes');
+        const inputTodayNukes = document.getElementById('input-today-nukes');
         const btnSave = document.getElementById('btn-save');
         const btnCancel = document.getElementById('btn-cancel');
 
         if (!modal) return;
 
         // Double click anywhere to open modal
-        document.body.addEventListener('dblclick', () => {
-            inputTotalKills.value = state.totalKills;
-            inputTotalNukes.value = state.totalNukes;
+        document.body.addEventListener('dblclick', (e) => {
+            if (modal.style.display === 'flex') return; // Prevent resetting when adjusting numbers with up/down arrows
+            inputTodayKills.value = state.todayKills || 0;
+            inputTotalDeaths.value = state.totalDeaths || 0;
+            inputTotalKills.value = state.totalKills || 0;
+            inputTotalNukes.value = state.totalNukes || 0;
+            inputTodayNukes.value = state.todayNukes || 0;
             modal.style.display = 'flex';
         });
 
         btnSave?.addEventListener('click', async () => {
-            const newTotalKills = readNumber(inputTotalKills.value, state.totalKills);
-            const newTotalNukes = readNumber(inputTotalNukes.value, state.totalNukes);
+            const newTodayKills = readNumber(inputTodayKills.value, state.todayKills || 0);
+            const newTotalDeaths = readNumber(inputTotalDeaths.value, state.totalDeaths || 0);
+            const newTotalKills = readNumber(inputTotalKills.value, state.totalKills || 0);
+            const newTotalNukes = readNumber(inputTotalNukes.value, state.totalNukes || 0);
+            const newTodayNukes = readNumber(inputTodayNukes.value, state.todayNukes || 0);
 
             try {
                 await fetch("http://127.0.0.1:8112/update", {
                     method: "POST",
-                    body: JSON.stringify({ totalKills: newTotalKills, totalNukes: newTotalNukes }),
+                    body: JSON.stringify({ 
+                        todayKills: newTodayKills, 
+                        totalDeaths: newTotalDeaths, 
+                        totalKills: newTotalKills, 
+                        totalNukes: newTotalNukes,
+                        todayNukes: newTodayNukes
+                    }),
                     headers: { "Content-Type": "application/json" }
                 });
             } catch (e) {
                 console.error("[NukeCounter] Failed to save to backend:", e);
             }
 
+            state.todayKills = newTodayKills;
+            state.totalDeaths = newTotalDeaths;
             state.totalKills = newTotalKills;
             state.totalNukes = newTotalNukes;
+            state.todayNukes = newTodayNukes;
             writeState(state);
             render(state);
             modal.style.display = 'none';
@@ -509,6 +547,8 @@
                     Object.assign(state, {
                         totalKills: newState.totalKills,
                         todayKills: newState.todayKills,
+                        totalDeaths: newState.totalDeaths || 0,
+                        todayDeaths: newState.todayDeaths || 0,
                         totalNukes: newState.totalNukes,
                         todayNukes: newState.todayNukes,
                         dayKey: newState.dayKey,
@@ -532,6 +572,8 @@
                 Object.assign(state, {
                     totalKills: newState.totalKills,
                     todayKills: newState.todayKills,
+                    totalDeaths: newState.totalDeaths || 0,
+                    todayDeaths: newState.todayDeaths || 0,
                     totalNukes: newState.totalNukes,
                     todayNukes: newState.todayNukes,
                     dayKey: newState.dayKey
@@ -563,11 +605,13 @@
                 state.todayNukes = 0;
                 state.totalKills = 0;
                 state.todayKills = 0;
+                state.totalDeaths = 0;
+                state.todayDeaths = 0;
                 
                 try {
                     await fetch("http://127.0.0.1:8112/update", {
                         method: "POST",
-                        body: JSON.stringify({ totalKills: 0, totalNukes: 0, todayKills: 0, todayNukes: 0 }),
+                        body: JSON.stringify({ totalKills: 0, totalNukes: 0, todayKills: 0, todayNukes: 0, totalDeaths: 0, todayDeaths: 0 }),
                         headers: { "Content-Type": "application/json" }
                     });
                 } catch (e) { console.error("[NukeCounter] resetAll failed", e); }
@@ -579,12 +623,13 @@
                 rotateDailyStats(state);
                 state.todayNukes = 0;
                 state.todayKills = 0;
+                state.todayDeaths = 0;
                 state.dayKey = todayKey();
                 
                 try {
                     await fetch("http://127.0.0.1:8112/update", {
                         method: "POST",
-                        body: JSON.stringify({ todayKills: 0, todayNukes: 0 }),
+                        body: JSON.stringify({ todayKills: 0, todayNukes: 0, todayDeaths: 0 }),
                         headers: { "Content-Type": "application/json" }
                     });
                 } catch (e) { console.error("[NukeCounter] resetToday failed", e); }
