@@ -12,6 +12,10 @@
     const STORAGE_PLAYER = "thunder_overlay.nuke_counter.player";
     const DEFAULT_PLAYER = "cupid00772";
 
+    // 連殺視窗 (ms):距上一個擊殺超過這個時間就開新一輪 (+1 重新數);
+    // 視窗內持續擊殺 → 同一泡泡累加 +2 +3 ... 並重置消失計時。可自行調整。
+    const COMBO_WINDOW_MS = 2500;
+
     const NUKE_KEYWORDS = {
         english: "Doomsday!",
         french: "Apocalypse!",
@@ -225,27 +229,38 @@
         return killerName !== null && matchesPlayerName(killerName, playerName);
     }
 
-    function setText(id, text) {
+    function setTextAndScale(id, text) {
         const element = document.getElementById(id);
         if (!element) {
             return;
         }
 
         element.textContent = text;
+        
+        // Dynamically scale down font size for long numbers
+        const len = text.toString().length;
+        if (len <= 4) {
+            element.style.fontSize = "2.8rem";
+        } else if (len === 5) {
+            element.style.fontSize = "2.2rem";
+        } else if (len === 6) {
+            element.style.fontSize = "1.8rem";
+        } else if (len === 7) {
+            element.style.fontSize = "1.5rem";
+        } else {
+            element.style.fontSize = "1.2rem";
+        }
     }
 
-    function formatK(num) {
-        if (num >= 1000) {
-            return (num / 1000).toFixed(1) + 'K';
-        }
+    function formatValue(num) {
         return num.toString();
     }
 
     function render(state) {
-        setText(TOTAL_KILL_ID, formatK(state.totalKills));
-        setText(TODAY_KILL_ID, formatK(state.todayKills));
-        setText(TOTAL_NUKE_ID, formatK(state.totalNukes));
-        setText(TODAY_NUKE_ID, formatK(state.todayNukes));
+        setTextAndScale(TOTAL_KILL_ID, formatValue(state.totalKills));
+        setTextAndScale(TODAY_KILL_ID, formatValue(state.todayKills));
+        setTextAndScale(TOTAL_NUKE_ID, formatValue(state.totalNukes));
+        setTextAndScale(TODAY_NUKE_ID, formatValue(state.todayNukes));
     }
 
     // 動畫觸發函數 - 專門處理核彈動畫
@@ -301,42 +316,50 @@
 
     let activeKillAnimEl = null;
     let activeKillAnimTimeout = null;
-    let currentComboCount = 0;
+    let comboCount = 0;
 
-    // 動畫觸發函數 - 專門處理擊殺連殺 (Combo)
+    // 動畫觸發函數 - 擊殺連殺 (Combo)
+    //  1. 連殺視窗內 (距上一刀 < COMBO_WINDOW_MS) 還活著的泡泡 → 直接累加,
+    //     +1 變 +2 變 +3,文字更新在「同一個」DOM 元素上,不疊字。
+    //  2. 視窗已過 (泡泡已消失) → 開新一輪,comboCount 從這次的 count 重新算。
+    //  3. 每次擊殺都重播彈跳動畫並重置消失計時器 → 一直殺就一直續命,
+    //     停手滿 COMBO_WINDOW_MS 才淡出。
+    //  4. count 支援一次多殺 (一發炸 2 台 → 直接 +2)。
     function triggerKillCombo(count) {
         if (typeof document === "undefined") return;
         const targetElement = document.getElementById(TODAY_KILL_ID);
         if (!targetElement) return;
         const parent = targetElement.parentElement;
 
-        currentComboCount += count;
-
-        if (activeKillAnimEl && parent.contains(activeKillAnimEl)) {
-            activeKillAnimEl.textContent = '+' + currentComboCount + ' KILL';
-            
-            activeKillAnimEl.classList.remove('kill-anim');
-            void activeKillAnimEl.offsetWidth; 
-            activeKillAnimEl.classList.add('kill-anim');
-
-            if (activeKillAnimTimeout) {
-                clearTimeout(activeKillAnimTimeout);
-            }
+        const comboAlive = activeKillAnimEl && parent.contains(activeKillAnimEl);
+        if (comboAlive) {
+            comboCount += count;          // 續殺:累加到同一個泡泡
         } else {
-            currentComboCount = count;
+            comboCount = count;           // 新一輪:重新數
             activeKillAnimEl = document.createElement('div');
             activeKillAnimEl.classList.add('floating-text', 'kill-anim');
-            activeKillAnimEl.textContent = '+' + currentComboCount + ' KILL';
             parent.appendChild(activeKillAnimEl);
         }
 
+        activeKillAnimEl.textContent = '+' + comboCount + ' KILL';
+
+        // 重播彈跳動畫 (reflow trick)
+        activeKillAnimEl.classList.remove('kill-anim');
+        void activeKillAnimEl.offsetWidth;
+        activeKillAnimEl.classList.add('kill-anim');
+
+        // 重置消失計時器:持續擊殺就一直續命
+        if (activeKillAnimTimeout) {
+            clearTimeout(activeKillAnimTimeout);
+        }
         activeKillAnimTimeout = setTimeout(() => {
             if (activeKillAnimEl && parent.contains(activeKillAnimEl)) {
                 parent.removeChild(activeKillAnimEl);
             }
             activeKillAnimEl = null;
-            currentComboCount = 0;
-        }, 5000);
+            activeKillAnimTimeout = null;
+            comboCount = 0;
+        }, COMBO_WINDOW_MS);
     }
     async function fetchHUD(seenEvent, seenDamage) {
         const response = await fetch(`${HOST}/hudmsg?lastEvt=${seenEvent}&lastDmg=${seenDamage}`, {
@@ -353,6 +376,22 @@
         return response.json();
     }
 
+    // 讀取 mission.json 來判斷當前是否為試車場
+    async function fetchMission() {
+        try {
+            const response = await fetch(`${HOST}/mission.json`, {
+                method: "GET",
+                headers: { Accept: "application/json" },
+            });
+            if (response.ok) {
+                return await response.json();
+            }
+        } catch (e) {
+            // ignore
+        }
+        return null;
+    }
+
 
 
     let keyword = getKeyword();
@@ -360,14 +399,9 @@
     const state = readState();
     rotateDailyStats(state);
 
-    let lastDmg = 0;                 // [patch A] 不從 localStorage 載入,避免 WT/OBS 重啟跨 session 殘留把新 damage 全部過濾掉
-    let lastEvt = state.lastEvt;
     let polling = false;
-    let firstPollDone = false;       // [patch B] 首次 poll 只對齊 baseline 不計分,避免刷新一次就 +N
-    let emptyPollCount = 0;
 
     console.log("[NukeCounter] 啟動! playerName:", playerName, "keyword:", keyword);
-    console.log("[NukeCounter] 從 localStorage 讀取 lastDmg:", lastDmg, "lastEvt:", lastEvt);
     console.log("[NukeCounter] state:", JSON.stringify(state));
 
     render(state);
@@ -391,9 +425,22 @@
             modal.style.display = 'flex';
         });
 
-        btnSave?.addEventListener('click', () => {
-            state.totalKills = readNumber(inputTotalKills.value, state.totalKills);
-            state.totalNukes = readNumber(inputTotalNukes.value, state.totalNukes);
+        btnSave?.addEventListener('click', async () => {
+            const newTotalKills = readNumber(inputTotalKills.value, state.totalKills);
+            const newTotalNukes = readNumber(inputTotalNukes.value, state.totalNukes);
+
+            try {
+                await fetch("http://127.0.0.1:8112/update", {
+                    method: "POST",
+                    body: JSON.stringify({ totalKills: newTotalKills, totalNukes: newTotalNukes }),
+                    headers: { "Content-Type": "application/json" }
+                });
+            } catch (e) {
+                console.error("[NukeCounter] Failed to save to backend:", e);
+            }
+
+            state.totalKills = newTotalKills;
+            state.totalNukes = newTotalNukes;
             writeState(state);
             render(state);
             modal.style.display = 'none';
@@ -409,97 +456,69 @@
     let lastNukeTime = 0;
     const NUKE_COOLDOWN_MS = 10000;
 
+    async function fetchBackendState() {
+        try {
+            const response = await fetch("http://127.0.0.1:8112/state", {
+                method: "GET",
+                headers: { Accept: "application/json" },
+            });
+            if (response.ok) {
+                return await response.json();
+            }
+        } catch (e) {
+            // ignore
+        }
+        return null;
+    }
+
+    let firstBackendSync = true;
+
     async function poll() {
         try {
-            const result = await fetchHUD(lastEvt, lastDmg);
-            const damage = Array.isArray(result.damage) ? result.damage : [];
-
-            // [patch B] 首次 poll 只對齊 lastDmg 到 server 當下最大 id,不計分。
-            // 避免 OBS 刷新 / overlay 載入時把 server 內所有歷史 damage 全部重複加進來 (例如 +31)。
-            if (!firstPollDone) {
-                firstPollDone = true;
-                if (damage.length > 0) {
-                    let maxId = lastDmg;
-                    for (const entry of damage) {
-                        if (typeof entry?.id === "number" && entry.id > maxId) {
-                            maxId = entry.id;
-                        }
-                    }
-                    lastDmg = maxId;
-                    console.log("[NukeCounter] 首次 poll baseline 對齊 lastDmg =", lastDmg, "(略過", damage.length, "筆歷史)");
-                } else {
-                    console.log("[NukeCounter] 首次 poll baseline,server 無歷史 damage");
-                }
-                return;
-            }
-
-            if (damage.length > 0) {
-                emptyPollCount = 0;
-                const now = Date.now();
-                let nukeTriggeredInBatch = false;
-                var batchKillCount = 0;
-
-                for (const entry of damage) {
-                    if (typeof entry?.msg !== "string") {
-                        continue;
-                    }
-
-                    if (entry.msg.includes(keyword)) {
-                        if (!nukeTriggeredInBatch && now - lastNukeTime > NUKE_COOLDOWN_MS) {
-                            state.totalNukes += 1;
-                            state.todayNukes += 1;
-                            triggerNukeAnimation();
-                            nukeTriggeredInBatch = true;
-                            lastNukeTime = now;
-                        }
-                    }
-
-                    var isOwned = isOwnedKillEvent(entry, keyword, playerName);
-                    if (isOwned) {
-                        var killCount = 1;
-                        var match = entry.msg.match(/(?:^|\s)(\d+)x\s/i);
-                        if (match) {
-                            var parsed = parseInt(match[1], 10);
-                            if (!isNaN(parsed) && parsed > 0) {
-                                killCount = parsed;
-                            }
-                        }
-                        
-                        state.totalKills += killCount;
-                        state.todayKills += killCount;
-                        batchKillCount += killCount;
-                    }
+            const newState = await fetchBackendState();
+            if (newState) {
+                // 首次同步:overlay 剛開時直接吃 backend 當下的累積值,不放動畫。
+                // 否則開 OBS / display 那一刻會因為「local 0 → backend 15」噴一個 +15。
+                if (firstBackendSync) {
+                    firstBackendSync = false;
+                    Object.assign(state, {
+                        totalKills: newState.totalKills,
+                        todayKills: newState.todayKills,
+                        totalNukes: newState.totalNukes,
+                        todayNukes: newState.todayNukes,
+                        dayKey: newState.dayKey,
+                    });
+                    writeState(state);
+                    render(state);
+                    return;
                 }
 
-                if (batchKillCount > 0) {
-                    triggerKillCombo(batchKillCount);
+                // Check if we need to trigger animations
+                if (newState.todayKills > state.todayKills) {
+                    const diff = newState.todayKills - state.todayKills;
+                    triggerKillCombo(diff);
                 }
 
-                const lastEntry = damage[damage.length - 1];
-                if (typeof lastEntry?.id === "number") {
-                    lastDmg = lastEntry.id;
+                if (newState.todayNukes > state.todayNukes) {
+                    triggerNukeAnimation();
                 }
 
-                state.lastDmg = lastDmg;
-                state.lastEvt = lastEvt;
-                rotateDailyStats(state);
+                // Update our local state
+                Object.assign(state, {
+                    totalKills: newState.totalKills,
+                    todayKills: newState.todayKills,
+                    totalNukes: newState.totalNukes,
+                    todayNukes: newState.todayNukes,
+                    dayKey: newState.dayKey
+                });
+
                 writeState(state);
                 render(state);
-            } else {
-                // 如果連續多次收到空回應，且 lastDmg 非常大（可能是 mock server 殘留），自動重置
-                emptyPollCount++;
-                if (emptyPollCount >= 5 && lastDmg > 10000) {
-                    console.warn("[NukeCounter] ⚠️ 連續", emptyPollCount, "次空回應，lastDmg 過大 (" + lastDmg + ")，疑似 mock server 殘留，自動重置為 0");
-                    lastDmg = 0;
-                    state.lastDmg = 0;
-                    writeState(state);
-                    emptyPollCount = 0;
-                }
             }
         } catch (error) {
-            console.debug("[NukeCounter] poll 失敗:", error);
+            console.debug("[NukeCounter] poll backend failed:", error);
         } finally {
-            window.setTimeout(poll, 1000);
+            window.setTimeout(poll, 100);
         }
     }
 
@@ -514,23 +533,37 @@
 
     if (typeof window !== "undefined") {
         window.NukeCounterOverlay = {
-            resetAll() {
+            async resetAll() {
                 state.totalNukes = 0;
                 state.todayNukes = 0;
                 state.totalKills = 0;
                 state.todayKills = 0;
-                lastDmg = 0;
-                state.lastDmg = lastDmg;
-                state.lastEvt = lastEvt;
-                state.dayKey = todayKey();
+                
+                try {
+                    await fetch("http://127.0.0.1:8112/update", {
+                        method: "POST",
+                        body: JSON.stringify({ totalKills: 0, totalNukes: 0, todayKills: 0, todayNukes: 0 }),
+                        headers: { "Content-Type": "application/json" }
+                    });
+                } catch (e) { console.error("[NukeCounter] resetAll failed", e); }
+
                 writeState(state);
                 render(state);
             },
-            resetToday() {
+            async resetToday() {
                 rotateDailyStats(state);
                 state.todayNukes = 0;
                 state.todayKills = 0;
                 state.dayKey = todayKey();
+                
+                try {
+                    await fetch("http://127.0.0.1:8112/update", {
+                        method: "POST",
+                        body: JSON.stringify({ todayKills: 0, todayNukes: 0 }),
+                        headers: { "Content-Type": "application/json" }
+                    });
+                } catch (e) { console.error("[NukeCounter] resetToday failed", e); }
+
                 writeState(state);
                 render(state);
             },
@@ -547,8 +580,6 @@
                     ...state,
                     keyword,
                     playerName,
-                    lastDmg,
-                    lastEvt,
                 };
             },
         };
