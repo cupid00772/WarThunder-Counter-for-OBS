@@ -131,13 +131,13 @@ body {
     font-weight: 700;
     opacity: 0;
     pointer-events: none;
-    /* 👇 這裡的 3.0s 是動畫的總持續時間，若要改長短，請同步修改 nuke_counter.js 的時間 */
-    animation: floatUp 5.0s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
 .floating-text.kill-anim {
     color: #ff9d00;
     text-shadow: 0 0 15px #ff9d00, 0 2px 5px #000;
+    /* 擊殺連殺視窗是 2.5 秒，所以動畫時間設為 2.5s */
+    animation: floatUp 2.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
 .floating-text.nuke-anim {
@@ -147,6 +147,8 @@ body {
     left: var(--nuke-left, auto);
     right: auto;
     top: var(--nuke-top, 50%);
+    /* 核彈維持 5.0 秒 */
+    animation: floatUp 5.0s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
 .nuke-text-wrap {
@@ -180,9 +182,17 @@ body {
         opacity: 0;
         transform: translateY(0) scale(0.5);
     }
-    15% {
+    10% {
         opacity: 1;
         transform: translateY(0) scale(1.3);
+    }
+    20% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    85% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
     }
     100% {
         opacity: 0;

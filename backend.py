@@ -20,6 +20,13 @@ POLL_INTERVAL = 0.1
 # NOT re-fetched on every damage-bearing poll (that round-trip used to sit on
 # the critical path before each kill was counted).
 MISSION_CACHE_SEC = 2.0
+# cursor 重抓 margin:每次把 lastDmg 留在「最大 id 往回 N」的位置,讓 WT 晚到 /
+# 亂序、id 比 cursor 小的擊殺訊息有機會被重新抓到。重複的靠 _mark_seen 去重,
+# 所以重抓不會多算。這是修「殺太快漏算」的核心。
+DMG_REFETCH_MARGIN = 40
+# debug 記錄檔:config.json 設 "debug": true 時,把每筆 damage 訊息與計分判定
+# 寫到 debug_kills.log,方便事後比對到底哪一行擊殺沒被算到。
+DEBUG_LOG_FILE = "debug_kills.log"
 
 NUKE_KEYWORDS = {
     "english": "Doomsday!",
@@ -157,6 +164,33 @@ empty_poll_count = 0
 first_poll_done = False
 last_mission_check = 0.0
 cached_is_test_drive = False
+last_config_load = 0.0
+# 已計分的 damage entry id,避免 cursor 重抓時同一筆擊殺被重複計數。
+seen_dmg_ids = set()
+seen_dmg_order = []
+
+def _mark_seen(entry_id):
+    """回傳 True 代表這是新的 id (該計分);False 代表已看過 (跳過)。"""
+    if entry_id in seen_dmg_ids:
+        return False
+    seen_dmg_ids.add(entry_id)
+    seen_dmg_order.append(entry_id)
+    if len(seen_dmg_order) > 1000:
+        for old in seen_dmg_order[:200]:
+            seen_dmg_ids.discard(old)
+        del seen_dmg_order[:200]
+    return True
+
+DEBUG = False
+
+def _debug_log(line):
+    if not DEBUG:
+        return
+    try:
+        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 def fetch_json(path):
     try:
@@ -171,15 +205,22 @@ def fetch_json(path):
 
 def tracker_loop():
     global app_state, last_nuke_time, empty_poll_count, first_poll_done
-    global last_mission_check, cached_is_test_drive
+    global last_mission_check, cached_is_test_drive, last_config_load, DEBUG
     print("[Backend] Tracker started in background.")
+    # 先載入一次 config (之後每 ~10 秒才重載,不再每個 damage poll 都讀檔)
+    config = load_config()
+    nuke_keyword = NUKE_KEYWORDS.get(config.get("language", "english"), NUKE_KEYWORDS["english"])
+    player_name = config.get("player_name", "cupid00772")
+    DEBUG = bool(config.get("debug", False))
     while True:
         try:
-            # Only reload config every 50 loops (~10 seconds) to save disk I/O
-            if empty_poll_count % 50 == 0:
+            now0 = time.time()
+            if (now0 - last_config_load) >= 10.0:
                 config = load_config()
                 nuke_keyword = NUKE_KEYWORDS.get(config.get("language", "english"), NUKE_KEYWORDS["english"])
                 player_name = config.get("player_name", "cupid00772")
+                DEBUG = bool(config.get("debug", False))
+                last_config_load = now0
 
             if rotate_daily_stats(app_state):
                 save_state(app_state)
@@ -203,6 +244,11 @@ def tracker_loop():
             if not first_poll_done:
                 first_poll_done = True
                 if damage:
+                    # baseline:把目前已存在的歷史 damage 全部標記為已看過,
+                    # 這樣之後 margin 重抓重新拉到它們時不會被當成新擊殺計分。
+                    for e in damage:
+                        if isinstance(e.get("id"), int):
+                            _mark_seen(e["id"])
                     max_id = max((e.get("id", 0) for e in damage if isinstance(e.get("id"), int)), default=last_dmg)
                     app_state["lastDmg"] = max_id
                     save_state(app_state)
@@ -223,39 +269,59 @@ def tracker_loop():
                     last_mission_check = now
                 is_test_drive = cached_is_test_drive
 
+                # cursor 取整批最大 id (不假設陣列末筆就是最大,避免 WT 回傳順序
+                # 不固定時 cursor 亂跳)
+                max_id = max(
+                    (e.get("id", 0) for e in damage if isinstance(e.get("id"), int)),
+                    default=app_state.get("lastDmg", 0),
+                )
+
                 if is_test_drive:
-                    last_entry = damage[-1]
-                    if isinstance(last_entry.get("id"), int):
-                        app_state["lastDmg"] = last_entry["id"]
-                        save_state(app_state)
+                    # 試車場不計分,但仍把 id 標記已看過,離開試車場後 margin 重抓
+                    # 才不會把試車場的擊殺補算進來。
+                    for e in damage:
+                        if isinstance(e.get("id"), int):
+                            _mark_seen(e["id"])
+                    app_state["lastDmg"] = max_id
+                    save_state(app_state)
                 else:
                     nuke_triggered = False
                     for entry in damage:
                         msg = entry.get("msg")
                         if not isinstance(msg, str):
                             continue
-                        
+
+                        # id 去重:cursor 重抓同一筆時不重複計分。沒有 int id 的就照算
+                        # (寧可偶爾重複也不漏;有 id 的才 dedup)。
+                        eid = entry.get("id")
+                        is_new = (not isinstance(eid, int)) or _mark_seen(eid)
+                        if not is_new:
+                            continue
+
                         if nuke_keyword in msg:
                             if not nuke_triggered and (now - last_nuke_time) > 10.0:
                                 app_state["totalNukes"] += 1
                                 app_state["todayNukes"] += 1
                                 nuke_triggered = True
                                 last_nuke_time = now
-                                
-                        if is_owned_kill_event(entry, nuke_keyword, player_name):
+
+                        owned = is_owned_kill_event(entry, nuke_keyword, player_name)
+                        if owned:
                             kill_count = 1
                             match = re.search(r'(?:^|\s)(\d+)x\s', msg, re.IGNORECASE)
                             if match:
                                 parsed = int(match.group(1))
                                 if parsed > 0:
                                     kill_count = parsed
-                            
+
                             app_state["totalKills"] += kill_count
                             app_state["todayKills"] += kill_count
 
-                    last_entry = damage[-1]
-                    if isinstance(last_entry.get("id"), int):
-                        app_state["lastDmg"] = last_entry["id"]
+                        _debug_log(f"id={eid} counted={owned} +{kill_count if owned else 0} | {msg}")
+
+                    # cursor 留 margin:不要直接跳到 max_id,而是退回 DMG_REFETCH_MARGIN,
+                    # 讓晚到/亂序、id 較小的擊殺訊息下一輪還抓得到 (去重防重複)。
+                    app_state["lastDmg"] = max(0, max_id - DMG_REFETCH_MARGIN)
                     save_state(app_state)
 
             else:

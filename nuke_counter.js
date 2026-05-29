@@ -361,6 +361,31 @@
             comboCount = 0;
         }, COMBO_WINDOW_MS);
     }
+
+    // 擊殺動畫排隊器:後端是「總數差值」驅動,快速連殺時一次 poll 可能 +2/+3。
+    // 若直接 triggerKillCombo(diff) 泡泡會從 +1 跳成 +3 (跳號,看起來怪)。
+    // 改成把 diff 排進佇列,每 KILL_ANIM_STEP_MS 平滑播一個 +1 → +1 +2 +3。
+    // 數字本身 (render) 仍即時跟著後端,動畫只是視覺節奏。
+    const KILL_ANIM_STEP_MS = 120;
+    let pendingKillAnim = 0;
+    let killAnimDrainer = null;
+
+    function enqueueKillAnim(n) {
+        if (typeof document === "undefined") return;
+        pendingKillAnim += n;
+        if (killAnimDrainer !== null) return;
+        const drain = () => {
+            if (pendingKillAnim <= 0) {
+                killAnimDrainer = null;
+                return;
+            }
+            pendingKillAnim -= 1;
+            triggerKillCombo(1);
+            killAnimDrainer = setTimeout(drain, KILL_ANIM_STEP_MS);
+        };
+        // 第一個立即播,其餘間隔播
+        drain();
+    }
     async function fetchHUD(seenEvent, seenDamage) {
         const response = await fetch(`${HOST}/hudmsg?lastEvt=${seenEvent}&lastDmg=${seenDamage}`, {
             method: "GET",
@@ -496,7 +521,7 @@
                 // Check if we need to trigger animations
                 if (newState.todayKills > state.todayKills) {
                     const diff = newState.todayKills - state.todayKills;
-                    triggerKillCombo(diff);
+                    enqueueKillAnim(diff);
                 }
 
                 if (newState.todayNukes > state.todayNukes) {
