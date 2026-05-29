@@ -46,5 +46,6 @@
     * Step1: 下載專案
     * Step2: 在 OBS 新增一個「瀏覽器來源」，勾選「本機檔案」，選擇 `index.html`(其他設定預設就好)。
     * Step3: 在 `nuke.counter.js` 修改 `DEFAULT_PLAYER` 為你的遊戲ID。
+    * Step4: 手動校正：需自行設定數值，請將鼠標懸停在計數器上，連續點擊兩下，輸入正確數字後按下確定，即可完成手動修正。
 2.  **開發測試**：
     開發時因為 CORS 限制與跨網域問題，建議在專案目錄下啟動一個簡易的 HTTP Server（例如：`python -m http.server 8080`），然後用瀏覽器開啟 `http://localhost:8080/index.html`，並開啟開發者工具 (F12) 觀看 `[NukeCounter]` 開頭的 Console Logs 以利除錯。
