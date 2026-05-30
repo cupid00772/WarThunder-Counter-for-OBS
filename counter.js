@@ -8,6 +8,16 @@
     const TODAY_DEATH_ID = "today-death";
     const TOTAL_KD_ID = "total-kd";
     const TODAY_KD_ID = "today-kd";
+    const VALUE_ANIM_MODE = 6;
+
+    let lastTotalKillsValue = null;
+    let lastTodayKillsValue = null;
+    let lastTotalNukesValue = null;
+    let lastTodayNukesValue = null;
+    let lastTotalDeathsValue = null;
+    let lastTodayDeathsValue = null;
+    let lastTotalKDValue = null;
+    let lastTodayKDValue = null;
 
     const STORAGE_STATE = "thunder_overlay.nuke_counter.state";
     const LEGACY_STORAGE_COUNT = "thunder_overlay.nuke_counter.count";
@@ -261,6 +271,61 @@
         }
     }
 
+    function triggerValueAnimation(id) {
+        const element = document.getElementById(id);
+        if (!element) {
+            return;
+        }
+
+        element.classList.remove("value-anim");
+        void element.offsetWidth;
+        element.classList.add("value-anim");
+
+        const parent = element.parentElement;
+        if (parent) {
+            const parentRect = parent.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+            const floatCopy = document.createElement("span");
+            floatCopy.className = "value-float-copy";
+            floatCopy.textContent = element.textContent;
+
+            const computed = window.getComputedStyle(element);
+            floatCopy.style.left = `${elementRect.left - parentRect.left}px`;
+            floatCopy.style.top = `${elementRect.top - parentRect.top}px`;
+            floatCopy.style.width = `${elementRect.width}px`;
+            floatCopy.style.height = `${elementRect.height}px`;
+            floatCopy.style.fontFamily = computed.fontFamily;
+            floatCopy.style.fontSize = computed.fontSize;
+            floatCopy.style.fontWeight = computed.fontWeight;
+            floatCopy.style.lineHeight = computed.lineHeight;
+            floatCopy.style.letterSpacing = computed.letterSpacing;
+            floatCopy.style.color = computed.color;
+            floatCopy.style.textShadow = computed.textShadow;
+
+            parent.appendChild(floatCopy);
+
+            setTimeout(() => {
+                if (floatCopy.parentElement) {
+                    floatCopy.parentElement.removeChild(floatCopy);
+                }
+            }, 900);
+
+            const ring = document.createElement("span");
+            ring.className = "value-pulse-ring value-pulse-ring-demo";
+            element.appendChild(ring);
+
+            setTimeout(() => {
+                if (ring.parentElement) {
+                    ring.parentElement.removeChild(ring);
+                }
+            }, 820);
+        }
+
+        setTimeout(() => {
+            element.classList.remove("value-anim");
+        }, 900);
+    }
+
     function formatValue(num) {
         return num.toString();
     }
@@ -283,6 +348,41 @@
         const todayKD = todayKDValue === 0 ? "NaN" : todayKDValue.toFixed(2);
         setTextAndScale(TOTAL_KD_ID, totalKD);
         setTextAndScale(TODAY_KD_ID, todayKD);
+
+        if (lastTotalKDValue !== null && totalKDValue !== lastTotalKDValue) {
+            triggerValueAnimation(TOTAL_KD_ID);
+        }
+        if (lastTodayKDValue !== null && todayKDValue !== lastTodayKDValue) {
+            triggerValueAnimation(TODAY_KD_ID);
+        }
+
+        if (lastTotalKillsValue !== null && state.totalKills !== lastTotalKillsValue) {
+            triggerValueAnimation(TOTAL_KILL_ID);
+        }
+        if (lastTodayKillsValue !== null && state.todayKills !== lastTodayKillsValue) {
+            triggerValueAnimation(TODAY_KILL_ID);
+        }
+        if (lastTotalNukesValue !== null && state.totalNukes !== lastTotalNukesValue) {
+            triggerValueAnimation(TOTAL_NUKE_ID);
+        }
+        if (lastTodayNukesValue !== null && state.todayNukes !== lastTodayNukesValue) {
+            triggerValueAnimation(TODAY_NUKE_ID);
+        }
+        if (lastTotalDeathsValue !== null && totalDeaths !== lastTotalDeathsValue) {
+            triggerValueAnimation(TOTAL_DEATH_ID);
+        }
+        if (lastTodayDeathsValue !== null && todayDeaths !== lastTodayDeathsValue) {
+            triggerValueAnimation(TODAY_DEATH_ID);
+        }
+
+        lastTotalKillsValue = state.totalKills;
+        lastTodayKillsValue = state.todayKills;
+        lastTotalNukesValue = state.totalNukes;
+        lastTodayNukesValue = state.todayNukes;
+        lastTotalDeathsValue = totalDeaths;
+        lastTodayDeathsValue = todayDeaths;
+        lastTotalKDValue = totalKDValue;
+        lastTodayKDValue = todayKDValue;
     }
 
     // 動畫觸發函數 - 專門處理核彈動畫
@@ -459,6 +559,7 @@
 
         const modal = document.getElementById('edit-modal');
         const inputTodayKills = document.getElementById('input-today-kills');
+        const inputTodayDeaths = document.getElementById('input-today-deaths');
         const inputTotalDeaths = document.getElementById('input-total-deaths');
         const inputTotalKills = document.getElementById('input-total-kills');
         const inputTotalNukes = document.getElementById('input-total-nukes');
@@ -472,6 +573,9 @@
         document.body.addEventListener('dblclick', (e) => {
             if (modal.style.display === 'flex') return; // Prevent resetting when adjusting numbers with up/down arrows
             inputTodayKills.value = state.todayKills || 0;
+            if (inputTodayDeaths) {
+                inputTodayDeaths.value = state.todayDeaths || 0;
+            }
             inputTotalDeaths.value = state.totalDeaths || 0;
             inputTotalKills.value = state.totalKills || 0;
             inputTotalNukes.value = state.totalNukes || 0;
@@ -481,6 +585,7 @@
 
         btnSave?.addEventListener('click', async () => {
             const newTodayKills = readNumber(inputTodayKills.value, state.todayKills || 0);
+            const newTodayDeaths = inputTodayDeaths ? readNumber(inputTodayDeaths.value, state.todayDeaths || 0) : (state.todayDeaths || 0);
             const newTotalDeaths = readNumber(inputTotalDeaths.value, state.totalDeaths || 0);
             const newTotalKills = readNumber(inputTotalKills.value, state.totalKills || 0);
             const newTotalNukes = readNumber(inputTotalNukes.value, state.totalNukes || 0);
@@ -491,6 +596,7 @@
                     method: "POST",
                     body: JSON.stringify({ 
                         todayKills: newTodayKills, 
+                        todayDeaths: newTodayDeaths,
                         totalDeaths: newTotalDeaths, 
                         totalKills: newTotalKills, 
                         totalNukes: newTotalNukes,
@@ -503,6 +609,7 @@
             }
 
             state.todayKills = newTodayKills;
+            state.todayDeaths = newTodayDeaths;
             state.totalDeaths = newTotalDeaths;
             state.totalKills = newTotalKills;
             state.totalNukes = newTotalNukes;

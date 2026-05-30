@@ -18,7 +18,7 @@
 *   **`index.html`**：顯示 **總計 (Total)** 數據。包含「總 K/D」、「Total Kills」、「Total Nukes」。
 *   **`today.html`**：顯示 **今日 (Today)** 數據。包含「Today's K/D」、「Today Kills」、「Today Nukes」。
 *   **`style.css`**：外觀風格，採用 Apple Glassmorphism (毛玻璃) 搭配軍武科技風格。
-*   **`nuke_counter.js`**：前端核心邏輯，負責向後端 (`http://127.0.0.1:8112`) 抓取數據、觸發連殺文字疊加動畫與核彈特效。
+*   **`counter.js`**：前端核心邏輯，負責向後端 (`http://127.0.0.1:8112`) 抓取數據、觸發連殺文字疊加動畫與核彈特效。
 
 ### 3. 後端邏輯 (`backend.py`)
 這是整個專案的資料核心：
@@ -35,7 +35,7 @@
 2.  **連殺疊加系統 (Kill Combo System)**：
     *   當偵測到擊殺時，會浮現 `+1 KILL`。如果在接下來的 **5 秒內** 又偵測到擊殺，系統**不會**產生新的文字重疊，而是會將原有的文字更新為 `+N KILL` (例如 `+3 KILL`) 並重新觸發彈跳動畫。
 3.  **手動校正 (Edit Modal)**：
-    *   由於 API 無法判斷 TK (Teamkill)，或是偶爾有漏算情況，你可以在任何一個計數器畫面上 **連續點擊滑鼠兩下** 開啟隱藏的編輯視窗。修改完成並按下儲存後，數據會直接送回 `backend.py` 保存，並立刻同步到所有畫面上。
+    *   由於 API 無法判斷 TK (Teamkill)，或是偶爾有漏算情況，你可以在任何一個計數器畫面上 **連續點擊滑鼠兩下** 開啟隱藏的編輯視窗。可手動調整 `Today Kills`、`Today Deaths`、`Total Kills`、`Total Deaths` 與核彈數；修改完成並按下儲存後，數據會直接送回 `backend.py` 保存，並立刻同步到所有畫面上。
 
 ## 如何使用 / 開發測試
 
@@ -49,4 +49,4 @@
     *   **Step 4**: (手動校正) 需自行設定數值時，請將滑鼠移至計數器畫面上，連續點擊兩下開啟修改視窗，修改儲存後即刻生效。
 
 2.  **開發測試**：
-    *   若需進行除錯，可以將 `config.json` 中的 `"debug"` 設為 `true`，後端會在目錄下產生 `debug_kills.log`，記錄每一筆解析過的戰鬥訊息，方便比對哪一行擊殺或死亡沒有被正確判斷。
+    *   若需進行除錯，可以將 `config.json` 中的 `"debug"` 設為 `true`，後端會在 `logs/` 目錄下產生兩個檔案：`logs/8111.log` 累積保存 `http://localhost:8111/hudmsg?...` 的原始資料，`logs/debug_kills.log` 記錄程式實際判定後的擊殺/死亡結果，並會標出 `skipped=baseline_seen`、`skipped=not_running`、`skipped=seen_before` 等跳過原因，方便對照問題發生在哪一段。

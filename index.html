@@ -5,13 +5,13 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Nuke Counter</title>
         <link rel="stylesheet" type="text/css" href="./style.css" />
-        <script type="text/javascript" src="./nuke_counter.js" defer></script>
+        <script type="text/javascript" src="./counter.js" defer></script>
     </head>
     <body>
         <div class="shell">
             <div class="grid">
                 <div class="metric kd-metric full-width">
-                    <div class="label">K / D</div>
+                    <div class="label">K/D</div>
                     <div id="total-kd" class="count-side">0.00</div>
                 </div>
                 <div class="metric kill-metric">
@@ -35,26 +35,28 @@
                         <input type="number" id="input-today-kills" />
                     </div>
                     <div class="input-group" style="flex: 1; margin-bottom: 0;">
-                        <label>Total Deaths (總死亡)</label>
-                        <input type="number" id="input-total-deaths" />
+                        <label>Today Deaths (今日死亡)</label>
+                        <input type="number" id="input-today-deaths" />
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                     <div class="input-group" style="flex: 1; margin-bottom: 0;">
-                        <label>Total Kills (總擊殺)</label>
-                        <input type="number" id="input-total-kills" />
+                        <label>Total Deaths (總死亡)</label>
+                        <input type="number" id="input-total-deaths" />
                     </div>
                     <div class="input-group" style="flex: 1; margin-bottom: 0;">
-                        <label>Total Nukes (總核彈)</label>
-                        <input type="number" id="input-total-nukes" />
+                        <label>Total Kills (總擊殺)</label>
+                        <input type="number" id="input-total-kills" />
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <div class="input-group" style="flex: 1; margin-bottom: 0;">
+                        <label>Total Nukes (總核彈)</label>
+                        <input type="number" id="input-total-nukes" />
+                    </div>
+                    <div class="input-group" style="flex: 1; margin-bottom: 0;">
                         <label>Today Nukes (今日核彈)</label>
                         <input type="number" id="input-today-nukes" />
-                    </div>
-                    <div class="input-group" style="flex: 1; margin-bottom: 0; visibility: hidden;">
                     </div>
                 </div>
                 <div class="modal-actions">
