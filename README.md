@@ -1,5 +1,8 @@
 # War Thunder Nuke & Kill Counter (OBS Overlay)
 
+<div align="center">
+    <img width="130" height="100" alt="image" src="https://github.com/user-attachments/assets/404c02a9-9573-4ae1-8c45-349a73e19dd4" />
+</div>
 這是一個專為 [War Thunder (戰爭雷霆)](https://warthunder.com/) 設計的 OBS 實況計數器 Overlay。利用遊戲內建的 HTTP API (`http://localhost:8111`) 即時讀取 HUD 訊息（右下角擊殺紀錄），實現自動追蹤「擊殺數 (Kills)」、「死亡數 (Deaths)」與「核彈數 (Nukes)」，並能自動計算顯示 K/D 值。
 
 注意：擊殺數在自定義戰鬥(Custom Battles)會計算友軍擊殺 (目前無解，8111 端口不會提供擊殺者陣營資訊，若有辦法解決，請告知)。
