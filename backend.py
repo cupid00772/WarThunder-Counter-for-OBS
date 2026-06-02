@@ -33,6 +33,11 @@ DMG_REFETCH_MARGIN = 40
 # 只算到 5)。改成連續失敗 N 次才重置;單次卡頓不動 baseline。
 # N * 0.2s(失敗路徑 sleep) ≈ 2 秒;真的關遊戲會持續失敗,很快就會跨過門檻。
 HUD_FAIL_RESET_THRESHOLD = 10
+# If /hudmsg returns no new damage for a few polls while our cursor is still
+# positive, probe from zero. War Thunder can reset damage ids on a new match
+# without the 8111 port ever refusing connections, leaving lastDmg ahead of the
+# current feed forever.
+EMPTY_CURSOR_PROBE_THRESHOLD = 5
 LOG_DIR = "logs"
 # debug 記錄檔:config.json 設 "debug": true 時,會把 8111 原始回傳與程式
 # 判定結果都寫到 logs/ 底下,方便事後比對到底哪一段出問題。
@@ -447,6 +452,19 @@ def _mark_seen(entry_id):
         del seen_dmg_order[:200]
     return True
 
+def _reset_damage_session_to_existing_feed(damage, max_id):
+    """Treat the visible feed as baseline after War Thunder damage ids rewind."""
+    seen_dmg_ids.clear()
+    del seen_dmg_order[:]
+    split_spaa_state.clear()
+    for entry in damage:
+        eid = entry.get("id")
+        if isinstance(eid, int):
+            _mark_seen(eid)
+            if DEBUG:
+                _debug_skip_log(eid, "cursor_rewind_baseline", entry.get("msg"))
+    app_state["lastDmg"] = max(0, max_id - DMG_REFETCH_MARGIN)
+
 DEBUG = False
 
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -809,9 +827,21 @@ def tracker_loop():
 
             else:
                 empty_poll_count += 1
-                if empty_poll_count >= 5 and app_state.get("lastDmg", 0) > 10000:
-                    app_state["lastDmg"] = 0
-                    save_state(app_state)
+                current_last_dmg = app_state.get("lastDmg", 0)
+                if empty_poll_count >= EMPTY_CURSOR_PROBE_THRESHOLD and current_last_dmg > 0:
+                    probe = fetch_json(f"/hudmsg?lastEvt={last_evt}&lastDmg=0")
+                    probe_damage = probe.get("damage", []) if isinstance(probe, dict) else []
+                    probe_max_id = max(
+                        (e.get("id", 0) for e in probe_damage if isinstance(e.get("id"), int)),
+                        default=0,
+                    )
+                    if probe_max_id > 0 and probe_max_id + DMG_REFETCH_MARGIN < current_last_dmg:
+                        _reset_damage_session_to_existing_feed(probe_damage, probe_max_id)
+                        first_poll_done = True
+                        save_state(app_state)
+                    elif current_last_dmg > 10000:
+                        app_state["lastDmg"] = 0
+                        save_state(app_state)
                     empty_poll_count = 0
 
         except Exception as e:
