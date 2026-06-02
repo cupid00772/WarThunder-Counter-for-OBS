@@ -10,16 +10,17 @@ import datetime
 HOST_ADDR = "127.0.0.1"
 HOST_PORT = 8111
 STATE_FILE = "state.json"
+DAILY_RECORDS_FILE = "daily_records.json"
 CONFIG_FILE = "config.json"
 SERVER_PORT = 8112
 
 # Poll interval for the 8111 tracker loop (seconds). Lower = lower kill-feed
 # latency, at the cost of slightly more localhost HTTP traffic.
-POLL_INTERVAL = 0.1
-# How long a /mission.json "test drive" determination stays cached, so it is
-# NOT re-fetched on every damage-bearing poll (that round-trip used to sit on
-# the critical path before each kill was counted).
-MISSION_CACHE_SEC = 2.0
+POLL_INTERVAL = 0.05
+# /mission.json is checked by a separate low-frequency watcher thread so the
+# hot /hudmsg polling path never waits on mission metadata.
+MISSION_POLL_INTERVAL = 1.0
+MISSION_STALE_SEC = 10.0
 # cursor 重抓 margin:每次把 lastDmg 留在「最大 id 往回 N」的位置,讓 WT 晚到 /
 # 亂序、id 比 cursor 小的擊殺訊息有機會被重新抓到。重複的靠 _mark_seen 去重,
 # 所以重抓不會多算。這是修「殺太快漏算」的核心。
@@ -162,7 +163,7 @@ def process_split_death(state, sys_key, role):
     )
     # 偵測「新的一條命」(2026-05-30 修):一套分體防空一條命只有 1 雷達 + 2 發射車。
     # 若這次死亡會超過該命容量(雷達已死又再死、或第 3 台發射車死),代表玩家已重生
-    # 這套 → 重置狀態機,讓新命的死亡能重新計。原本 latch 只在換場 (not_running) 重置,
+    # 這套 → 重置狀態機,讓新命的死亡能重新計。原本 latch 只在換場/跳過計數時重置,
     # 同場重生再死會被永久鎖住 → 死亡不計 (神槍回報的根因)。
     is_new_life = (
         (role == "radar" and unit["radarDead"]) or
@@ -201,21 +202,101 @@ def default_state():
         "lastEvt": 0,
     }
 
+def load_daily_records():
+    if os.path.exists(DAILY_RECORDS_FILE):
+        try:
+            with open(DAILY_RECORDS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                data = data.get("dailyRecords", [])
+            if isinstance(data, list):
+                return data
+        except:
+            pass
+    return []
+
+def save_daily_records(records):
+    cleaned = []
+
+    def to_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    for record in records[-60:]:
+        if not isinstance(record, dict):
+            continue
+        date = record.get("date")
+        if not isinstance(date, str) or not date:
+            continue
+        cleaned.append({
+            "date": date,
+            "kills": to_int(record.get("kills", 0)),
+            "deaths": to_int(record.get("deaths", 0)),
+        })
+
+    with open(DAILY_RECORDS_FILE, "w", encoding="utf-8") as f:
+        json.dump(cleaned, f, ensure_ascii=False, indent=2)
+
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             base = default_state()
+            legacy_daily_records = []
+            if isinstance(data, dict):
+                legacy_daily_records = data.pop("dailyRecords", [])
             base.update(data)
+            if isinstance(legacy_daily_records, list) and legacy_daily_records and not os.path.exists(DAILY_RECORDS_FILE):
+                save_daily_records(legacy_daily_records)
             return base
         except:
             pass
     return default_state()
 
 def save_state(state):
+    state_to_save = {k: v for k, v in state.items() if k != "dailyRecords"}
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+        json.dump(state_to_save, f, ensure_ascii=False, indent=2)
+
+def append_daily_record(state):
+    records = state.get("dailyRecords")
+    if not isinstance(records, list):
+        records = []
+        state["dailyRecords"] = records
+
+    def to_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    day_key = state.get("dayKey")
+    if not isinstance(day_key, str) or not day_key:
+        day_key = today_key()
+
+    record = {
+        "date": day_key,
+        "kills": to_int(state.get("todayKills", 0)),
+        "deaths": to_int(state.get("todayDeaths", 0)),
+    }
+
+    if records:
+        last_record = records[-1]
+        if (
+            isinstance(last_record, dict)
+            and last_record.get("date") == record["date"]
+            and to_int(last_record.get("kills", -1)) == record["kills"]
+            and to_int(last_record.get("deaths", -1)) == record["deaths"]
+        ):
+            return
+
+    records.append(record)
+    if len(records) > 60:
+        del records[:-60]
+    save_daily_records(records)
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -232,6 +313,7 @@ def load_config():
 def rotate_daily_stats(state):
     current = today_key()
     if state.get("dayKey") != current:
+        append_daily_record(state)
         state["dayKey"] = current
         state["todayNukes"] = 0
         state["todayKills"] = 0
@@ -324,17 +406,28 @@ def is_owned_death_event(entry, nuke_keyword, player_name, ignored_keywords=None
 
 # Global state
 app_state = load_state()
+app_state["dailyRecords"] = load_daily_records()
 rotate_daily_stats(app_state)
 last_nuke_time = 0
 empty_poll_count = 0
 first_poll_done = False
-last_mission_check = 0.0
 cached_is_test_drive = False
-cached_mission_status = ""
+cached_mission_status = None
+cached_mission_updated_at = 0.0
 last_config_load = 0.0
 # 連續抓不到 /hudmsg 的次數 (FIX 2026-05-30):用來區分「WT 卡頓一下」與
 # 「WT 真的關了」。只有跨過 HUD_FAIL_RESET_THRESHOLD 才重置 baseline。
+# (2026-06-02 起改用 connection-refused 偵測,hud_fail_count 已不再觸發 baseline 重置)
 hud_fail_count = 0
+# === FIX (2026-06-02) — 漏抓 kill 根因修正 ===
+# last_request_refused:上一次 fetch_json 是否因 ConnectionRefusedError 失敗。
+#   8111 沒在聽 = War Thunder 真的關了;單純 timeout 則代表遊戲還開著只是卡頓。
+#   兩者在 Python 是不同例外 (ConnectionRefusedError vs TimeoutError),可明確區分。
+# game_was_off:是否曾偵測到遊戲關閉。連回來時代表是新一場 session、hudmsg id 已
+#   reset → 需清掉 seen 去重狀態並重新 baseline 一次,否則新 id 會跟舊 session 撞號
+#   被誤判成「看過」而漏算。
+last_request_refused = False
+game_was_off = False
 # 已計分的 damage entry id,避免 cursor 重抓時同一筆擊殺被重複計數。
 seen_dmg_ids = set()
 seen_dmg_order = []
@@ -376,7 +469,7 @@ def _debug_log(line):
             try:
                 eid = int(m.group(1))
                 # 保留每個 id「第一次」的判定 (counted/died / baseline_seen /
-                # not_running),不被之後 margin 重抓的 seen_before 覆蓋,
+                # test_drive),不被之後 margin 重抓的 seen_before 覆蓋,
                 # 才看得出死亡到底卡在哪一關 (2026-05-30 診斷分體防空死亡不計)。
                 if eid not in debug_by_id:
                     debug_by_id[eid] = line
@@ -440,13 +533,70 @@ def _debug_raw_log(line):
     except Exception:
         pass
 
-def fetch_json(path):
+def _flatten_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _flatten_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _flatten_strings(item)
+
+def is_test_drive_mission(mission_data):
+    if not isinstance(mission_data, dict):
+        return False
+    text = " ".join(_flatten_strings(mission_data)).lower()
+    test_keywords = (
+        "test drive",
+        "test flight",
+        "test sail",
+        "test_drive",
+        "test_flight",
+        "testdrive",
+        "testflight",
+        "試車",
+        "試飛",
+        "试车",
+        "试飞",
+    )
+    return any(keyword in text for keyword in test_keywords)
+
+def is_cached_test_drive_active():
+    return cached_is_test_drive and (time.time() - cached_mission_updated_at) <= MISSION_STALE_SEC
+
+def fetch_json_quiet(path, timeout=0.3):
     try:
-        conn = http.client.HTTPConnection(HOST_ADDR, HOST_PORT, timeout=0.5)
+        conn = http.client.HTTPConnection(HOST_ADDR, HOST_PORT, timeout=timeout)
         conn.request("GET", path, headers={'Accept': 'application/json'})
         response = conn.getresponse()
         data = response.read()
         conn.close()
+        return json.loads(data.decode('utf-8', errors='replace'))
+    except Exception:
+        return None
+
+def mission_loop():
+    global cached_is_test_drive, cached_mission_status, cached_mission_updated_at
+    print("[Backend] Mission watcher started in background.")
+    while True:
+        mission_data = fetch_json_quiet("/mission.json", timeout=0.3)
+        if isinstance(mission_data, dict):
+            cached_mission_status = mission_data.get("status")
+            cached_is_test_drive = is_test_drive_mission(mission_data)
+            cached_mission_updated_at = time.time()
+        time.sleep(MISSION_POLL_INTERVAL)
+
+def fetch_json(path):
+    global last_request_refused
+    last_request_refused = False
+    try:
+        conn = http.client.HTTPConnection(HOST_ADDR, HOST_PORT, timeout=0.15)
+        conn.request("GET", path, headers={'Accept': 'application/json'})
+        response = conn.getresponse()
+        data = response.read()
+        conn.close()
+        last_request_refused = False
         raw_text = data.decode('utf-8', errors='replace')
         if DEBUG:
             if path.startswith("/hudmsg"):
@@ -486,13 +636,17 @@ def fetch_json(path):
         else:
             parsed = json.loads(raw_text)
         return parsed
+    except ConnectionRefusedError:
+        # 8111 沒在聽 = War Thunder 沒開/已關閉 (與單純 timeout 卡頓區分開來)。
+        last_request_refused = True
+        return None
     except Exception as e:
         return None
 
 def tracker_loop():
     global app_state, last_nuke_time, empty_poll_count, first_poll_done
-    global last_mission_check, cached_is_test_drive, cached_mission_status, last_config_load, DEBUG
-    global hud_fail_count
+    global last_config_load, DEBUG
+    global hud_fail_count, game_was_off
     print("[Backend] Tracker started in background.")
     # 先載入一次 config (之後每 ~10 秒才重載,不再每個 damage poll 都讀檔)
     config = load_config()
@@ -519,28 +673,34 @@ def tracker_loop():
 
             hud = fetch_json(f"/hudmsg?lastEvt={last_evt}&lastDmg={last_dmg}")
             if not hud:
-                # === FIX (2026-05-30) ===
-                # 舊版:單次抓不到就 first_poll_done=False + lastDmg=0,重連後把
-                # 當下 kill feed 整批當 baseline 吞掉 → 連殺漏算。
-                # 新版:單次失敗只是 WT 卡頓,不重置;連續失敗 N 次 (≈WT 真的關了/
-                # 換場) 才重置 baseline,讓下一場重新對齊。
-                hud_fail_count += 1
-                if hud_fail_count >= HUD_FAIL_RESET_THRESHOLD:
-                    first_poll_done = False
-                    if app_state.get("lastDmg", 0) != 0:
-                        app_state["lastDmg"] = 0
-                        save_state(app_state)
-                time.sleep(0.2)
+                # === FIX (2026-06-02) ===
+                # 只把「connection refused」(8111 沒在聽 = 遊戲真的關了) 當重置信號。
+                # 單純 timeout 卡頓時遊戲還開著、hudmsg id 連續,**不動 baseline**,
+                # 靠 seen_dmg_ids 去重續算,避免把卡頓期間正在跑的連殺整批當 baseline
+                # 吞掉 — 這是舊版「連續 N 次任意失敗就重 baseline」的漏算根因。
+                if last_request_refused:
+                    game_was_off = True
+                time.sleep(POLL_INTERVAL)
                 continue
 
-            # 成功抓到 /hudmsg → 清掉連續失敗計數 (FIX 2026-05-30)
-            hud_fail_count = 0
+            # === FIX (2026-06-02) ===
+            # 曾偵測到遊戲關閉 (refused) 後又連回來 → 是新的一場 session,War Thunder
+            # 的 hudmsg id 會從頭 reset。舊的 seen 清單會跟新 session 的低 id 撞號 →
+            # 把新擊殺誤判成「看過」而漏算。所以清掉去重狀態 + 強制重新 baseline 一次,
+            # 對齊新 session。同場 timeout 卡頓不會走到這裡 (那條路徑不重置)。
+            if game_was_off:
+                seen_dmg_ids.clear()
+                del seen_dmg_order[:]
+                split_spaa_state.clear()
+                first_poll_done = False
+                app_state["lastDmg"] = 0
+                game_was_off = False
 
             damage = hud.get("damage", [])
 
             if not first_poll_done:
                 first_poll_done = True
-                if damage:
+                if damage and app_state.get("lastDmg", 0) <= 0:
                     # baseline:把目前已存在的歷史 damage 全部標記為已看過,
                     # 這樣之後 margin 重抓重新拉到它們時不會被當成新擊殺計分。
                     for e in damage:
@@ -552,24 +712,12 @@ def tracker_loop():
                     max_id = max((e.get("id", 0) for e in damage if isinstance(e.get("id"), int)), default=last_dmg)
                     app_state["lastDmg"] = max_id
                     save_state(app_state)
-                time.sleep(0.2)
-                continue
+                    time.sleep(0.2)
+                    continue
 
             if damage:
                 empty_poll_count = 0
                 now = time.time()
-
-                # Refresh the test-drive flag at most once every MISSION_CACHE_SEC
-                # instead of fetching /mission.json on every damage-bearing poll.
-                # That extra round-trip used to delay every kill from being counted.
-                if (now - last_mission_check) >= MISSION_CACHE_SEC:
-                    mission_data = fetch_json("/mission.json")
-                    if mission_data is not None:
-                        cached_mission_status = mission_data.get("status", "")
-                    else:
-                        cached_mission_status = ""
-                    last_mission_check = now
-                mission_status = cached_mission_status
 
                 # cursor 取整批最大 id (不假設陣列末筆就是最大,避免 WT 回傳順序
                 # 不固定時 cursor 亂跳)
@@ -578,17 +726,16 @@ def tracker_loop():
                     default=app_state.get("lastDmg", 0),
                 )
 
-                if mission_status != "running":
-                    # 狀態不為 running 時不計分,但仍把 id 標記已看過,
-                    # 避免之後 margin 重抓時補算進來。
-                    # 換場 → 清掉分體防空狀態機,讓下一場每套系統重新從零計死。
+                if is_cached_test_drive_active():
+                    # 試車/試飛場不計分,但仍把 id 標記已看過,避免離開試車場後
+                    # margin 重抓時把試車場擊殺補算進正式統計。
                     split_spaa_state.clear()
                     for e in damage:
                         eid = e.get("id")
                         if isinstance(eid, int):
                             _mark_seen(eid)
                             if DEBUG:
-                                _debug_skip_log(eid, "not_running", e.get("msg"), f"mission_status={mission_status or ''}")
+                                _debug_skip_log(eid, "test_drive", e.get("msg"))
                     app_state["lastDmg"] = max_id
                     save_state(app_state)
                 else:
@@ -691,7 +838,17 @@ class StateHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(app_state).encode('utf-8'))
+            payload = dict(app_state)
+            payload["dailyRecords"] = load_daily_records()
+            payload["isTestDrive"] = is_cached_test_drive_active()
+            payload["missionStatus"] = cached_mission_status
+            self.wfile.write(json.dumps(payload).encode('utf-8'))
+        elif self.path == '/daily-records':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(load_daily_records()).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -739,5 +896,6 @@ def run_server():
     server.serve_forever()
 
 if __name__ == '__main__':
+    threading.Thread(target=mission_loop, daemon=True).start()
     threading.Thread(target=tracker_loop, daemon=True).start()
     run_server()

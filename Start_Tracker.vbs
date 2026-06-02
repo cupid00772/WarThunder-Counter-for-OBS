@@ -25,4 +25,8 @@ Sub KillExistingBackend(scriptPath)
 End Sub
 
 KillExistingBackend currentDir & "\backend.py"
-WshShell.Run "pythonw.exe """ & currentDir & "\backend.py""", 0, False
+pythonwPath = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Python\pythoncore-3.14-64\pythonw.exe"
+If Not fso.FileExists(pythonwPath) Then
+	pythonwPath = "pythonw.exe"
+End If
+WshShell.Run """" & pythonwPath & """ """ & currentDir & "\backend.py""", 0, False

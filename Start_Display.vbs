@@ -20,7 +20,7 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-indexUrl = "file:///" & Replace(scriptDir & "\index.html", "\", "/")
+indexUrl = "file:///" & Replace(scriptDir & "\startdisplay.html", "\", "/")
 
 ' 獨立 profile,避免跟你平常的 Chrome 視窗互卡 (但不需要關 web security)
 profileDir = scriptDir & "\_display_profile"
@@ -35,7 +35,7 @@ End If
 cmd = """" & browserPath & """" & _
       " --app=""" & indexUrl & """" & _
       " --user-data-dir=""" & profileDir & """" & _
-      " --window-size=380,260" & _
+      " --window-size=420,420" & _
       " --no-first-run --no-default-browser-check"
 
 shell.Run cmd, 1, False

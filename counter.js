@@ -99,6 +99,7 @@
             todayKills: 0,
             totalDeaths: 0,
             todayDeaths: 0,
+            dailyRecords: [],
             lastDmg: 0,
             lastEvt: 0,
         };
@@ -120,6 +121,7 @@
                     todayKills: readNumber(String(parsed.todayKills ?? ""), base.todayKills),
                     totalDeaths: readNumber(String(parsed.totalDeaths ?? ""), base.totalDeaths),
                     todayDeaths: readNumber(String(parsed.todayDeaths ?? ""), base.todayDeaths),
+                    dailyRecords: Array.isArray(parsed.dailyRecords) ? parsed.dailyRecords : base.dailyRecords,
                     lastDmg: readNumber(String(parsed.lastDmg ?? ""), base.lastDmg),
                     lastEvt: readNumber(String(parsed.lastEvt ?? ""), base.lastEvt),
                 };
@@ -330,6 +332,37 @@
         return num.toString();
     }
 
+    function renderDailyRecords(state) {
+        const list = document.getElementById("daily-records");
+        if (!list) {
+            return;
+        }
+
+        const records = Array.isArray(state.dailyRecords) ? state.dailyRecords : [];
+        if (records.length === 0) {
+            list.innerHTML = '<li class="record-empty">尚未有每日紀錄</li>';
+            return;
+        }
+
+        const recentRecords = records.slice(-7).reverse();
+        list.innerHTML = recentRecords
+            .map((record) => {
+                const date = typeof record?.date === "string" ? record.date : "-";
+                const kills = Number.isFinite(Number(record?.kills)) ? Number(record.kills) : 0;
+                const deaths = Number.isFinite(Number(record?.deaths)) ? Number(record.deaths) : 0;
+                return `
+                    <li class="record-item">
+                        <span class="record-date">${date}</span>
+                        <span class="record-values">
+                            <span class="record-pill record-kills">K ${kills}</span>
+                            <span class="record-pill record-deaths">D ${deaths}</span>
+                        </span>
+                    </li>
+                `;
+            })
+            .join("");
+    }
+
     function render(state) {
         setTextAndScale(TOTAL_KILL_ID, formatValue(state.totalKills));
         setTextAndScale(TODAY_KILL_ID, formatValue(state.todayKills));
@@ -374,6 +407,8 @@
         if (lastTodayDeathsValue !== null && todayDeaths !== lastTodayDeathsValue) {
             triggerValueAnimation(TODAY_DEATH_ID);
         }
+
+        renderDailyRecords(state);
 
         lastTotalKillsValue = state.totalKills;
         lastTodayKillsValue = state.todayKills;
