@@ -63,3 +63,6 @@ _display_profile/
 state.json
 config.json
 daily_records.json
+
+#debug
+debug_kills.py

@@ -37,12 +37,13 @@ HUD_FAIL_RESET_THRESHOLD = 10
 # positive, probe from zero. War Thunder can reset damage ids on a new match
 # without the 8111 port ever refusing connections, leaving lastDmg ahead of the
 # current feed forever.
-EMPTY_CURSOR_PROBE_THRESHOLD = 5
+EMPTY_CURSOR_PROBE_THRESHOLD = 100
 LOG_DIR = "logs"
 # debug 記錄檔:config.json 設 "debug": true 時,會把 8111 原始回傳與程式
 # 判定結果都寫到 logs/ 底下,方便事後比對到底哪一段出問題。
 DEBUG_RAW_LOG_FILE = os.path.join(LOG_DIR, "8111.log")
 DEBUG_LOG_FILE = os.path.join(LOG_DIR, "debug_kills.log")
+COUNTED_KILLS_LOG = os.path.join(LOG_DIR, "counted_kills.log")
 
 NUKE_KEYWORDS = {
     "english": "Doomsday!",
@@ -464,6 +465,11 @@ def _reset_damage_session_to_existing_feed(damage, max_id):
     app_state["matchKillIds"] = []
     app_state["matchNukeIds"] = []
     app_state["matchDeathIds"] = []
+    try:
+        with open(COUNTED_KILLS_LOG, "a", encoding="utf-8") as f:
+            f.write("\n=== NEW MATCH DETECTED / ID REWIND ===\n")
+    except:
+        pass
     for entry in damage:
         eid = entry.get("id")
         if isinstance(eid, int):
@@ -669,7 +675,7 @@ def fetch_json(path):
         # 單純 timeout 或其他例外,不增加 refused_count
         return None
 
-def fallback_recover_missed_events(damage, nuke_keyword, player_name):
+def fallback_recover_missed_events(damage, nuke_keyword, player_name, ignored_death_keywords):
     """
     Fallback 備援機制：掃描整場對戰的完整擊殺紀錄 (probe_damage)，
     尋找任何可能因為卡頓、程式重開或游標亂序而漏抓的擊殺/核彈/死亡事件。
@@ -677,6 +683,10 @@ def fallback_recover_missed_events(damage, nuke_keyword, player_name):
     確保即使程式重開也不會發生重複計算(Double Counting)的問題。
     """
     recovered = False
+    
+    # 建立臨時的分體防空狀態機，用來重演整場的分體死亡次數
+    temp_split_state = {}
+    
     for entry in damage:
         eid = entry.get("id")
         if not isinstance(eid, int):
@@ -710,7 +720,7 @@ def fallback_recover_missed_events(damage, nuke_keyword, player_name):
                 _debug_log(f"id={eid} FALLBACK RECOVERED KILL: kill_count={kill_count} | {msg}")
                 recovered = True
                 
-        # 【備援：死亡事件】(這裡只負責一般死亡；分體防空的狀態機太複雜，不在此進行備援)
+        # 【備援：死亡事件】
         victim = extract_victim_name(msg)
         victim_is_me = (
             nuke_keyword not in msg
@@ -719,13 +729,26 @@ def fallback_recover_missed_events(damage, nuke_keyword, player_name):
         )
         if victim_is_me:
             split_info = classify_split_spaa(msg, player_name)
-            if not split_info:
-                if eid not in app_state.setdefault("matchDeathIds", []):
-                    app_state["matchDeathIds"].append(eid)
-                    app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
-                    app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
-                    _debug_log(f"id={eid} FALLBACK RECOVERED DEATH | {msg}")
-                    recovered = True
+            if split_info:
+                # 重新模擬分體防空狀態
+                sys_key, role = split_info
+                died = process_split_death(temp_split_state, sys_key, role)
+                if died:
+                    if eid not in app_state.setdefault("matchDeathIds", []):
+                        app_state["matchDeathIds"].append(eid)
+                        app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
+                        app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
+                        _debug_log(f"id={eid} FALLBACK RECOVERED SPLIT DEATH | {msg}")
+                        recovered = True
+            else:
+                # 一般死亡，使用與主迴圈相同的過濾邏輯
+                if is_owned_death_event(entry, nuke_keyword, player_name, ignored_death_keywords):
+                    if eid not in app_state.setdefault("matchDeathIds", []):
+                        app_state["matchDeathIds"].append(eid)
+                        app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
+                        app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
+                        _debug_log(f"id={eid} FALLBACK RECOVERED DEATH | {msg}")
+                        recovered = True
                     
     return recovered
 
@@ -781,6 +804,11 @@ def tracker_loop():
                 first_poll_done = False
                 app_state["lastDmg"] = 0
                 game_was_off = False
+                try:
+                    with open(COUNTED_KILLS_LOG, "a", encoding="utf-8") as f:
+                        f.write("\n=== NEW SESSION (GAME RECONNECTED) ===\n")
+                except:
+                    pass
 
             damage = hud.get("damage", [])
 
@@ -802,7 +830,7 @@ def tracker_loop():
                     continue
 
             if damage:
-                empty_poll_count = 0
+                new_events_found = False
                 now = time.time()
 
                 # cursor 取整批最大 id (不假設陣列末筆就是最大,避免 WT 回傳順序
@@ -819,7 +847,8 @@ def tracker_loop():
                     for e in damage:
                         eid = e.get("id")
                         if isinstance(eid, int):
-                            _mark_seen(eid)
+                            if _mark_seen(eid):
+                                new_events_found = True
                             if DEBUG:
                                 _debug_skip_log(eid, "test_drive", e.get("msg"))
                     app_state["lastDmg"] = max_id
@@ -839,6 +868,8 @@ def tracker_loop():
                             if DEBUG:
                                 _debug_skip_log(eid, "seen_before", msg)
                             continue
+                            
+                        new_events_found = True
 
                         if nuke_keyword in msg:
                             if not nuke_triggered:
@@ -862,6 +893,12 @@ def tracker_loop():
 
                                 app_state["totalKills"] = app_state.get("totalKills", 0) + kill_count
                                 app_state["todayKills"] = app_state.get("todayKills", 0) + kill_count
+                                
+                                try:
+                                    with open(COUNTED_KILLS_LOG, "a", encoding="utf-8") as f:
+                                        f.write(f"[{time.strftime('%H:%M:%S')}] id={eid} (+{kill_count}) | {msg}\n")
+                                except Exception:
+                                    pass
 
                         # === 分體防空死亡計數 (2026-05-30) ===
                         # 一套分體防空被打掉會噴 2~3 行 (雷達車 + 2 發射車各一行),
@@ -884,12 +921,8 @@ def tracker_loop():
                             died = is_owned_death_event(entry, nuke_keyword, player_name, ignored_death_keywords)
 
                         if died:
-                            if not split_info:
-                                if eid not in app_state.setdefault("matchDeathIds", []):
-                                    app_state["matchDeathIds"].append(eid)
-                                    app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
-                                    app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
-                            else:
+                            if eid not in app_state.setdefault("matchDeathIds", []):
+                                app_state["matchDeathIds"].append(eid)
                                 app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
                                 app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
 
@@ -902,6 +935,11 @@ def tracker_loop():
                     # 讓晚到/亂序、id 較小的擊殺訊息下一輪還抓得到 (去重防重複)。
                     app_state["lastDmg"] = max(0, max_id - DMG_REFETCH_MARGIN)
                     save_state(app_state)
+                    
+                if new_events_found:
+                    empty_poll_count = 0
+                else:
+                    empty_poll_count += 1
 
             else:
                 empty_poll_count += 1
@@ -928,7 +966,7 @@ def tracker_loop():
                     # 每次背景閒置觸發 probe (抓取整場完整紀錄) 時，呼叫備援函數。
                     # 如果有成功補回任何漏掉的擊殺，就立即存檔更新畫面。
                     if not is_cached_test_drive_active() and probe_damage:
-                        if fallback_recover_missed_events(probe_damage, nuke_keyword, player_name):
+                        if fallback_recover_missed_events(probe_damage, nuke_keyword, player_name, ignored_death_keywords):
                             save_state(app_state)
                             
                     empty_poll_count = 0
