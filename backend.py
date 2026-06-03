@@ -205,6 +205,9 @@ def default_state():
         "todayDeaths": 0,
         "lastDmg": 0,
         "lastEvt": 0,
+        "matchKillIds": [],
+        "matchNukeIds": [],
+        "matchDeathIds": [],
     }
 
 def load_daily_records():
@@ -429,9 +432,10 @@ hud_fail_count = 0
 #   8111 沒在聽 = War Thunder 真的關了;單純 timeout 則代表遊戲還開著只是卡頓。
 #   兩者在 Python 是不同例外 (ConnectionRefusedError vs TimeoutError),可明確區分。
 # game_was_off:是否曾偵測到遊戲關閉。連回來時代表是新一場 session、hudmsg id 已
-#   reset → 需清掉 seen 去重狀態並重新 baseline 一次,否則新 id 會跟舊 session 撞號
 #   被誤判成「看過」而漏算。
-last_request_refused = False
+# (2026-06-03 修改: Windows 下 backlogging 滿了也會噴 ConnectionRefusedError,
+#  單次 Refused 不能直接當成遊戲關閉,必須連續失敗超過門檻才算,否則遊戲卡頓時會誤判重置而漏算)
+refused_count = 0
 game_was_off = False
 # 已計分的 damage entry id,避免 cursor 重抓時同一筆擊殺被重複計數。
 seen_dmg_ids = set()
@@ -457,6 +461,9 @@ def _reset_damage_session_to_existing_feed(damage, max_id):
     seen_dmg_ids.clear()
     del seen_dmg_order[:]
     split_spaa_state.clear()
+    app_state["matchKillIds"] = []
+    app_state["matchNukeIds"] = []
+    app_state["matchDeathIds"] = []
     for entry in damage:
         eid = entry.get("id")
         if isinstance(eid, int):
@@ -606,15 +613,14 @@ def mission_loop():
         time.sleep(MISSION_POLL_INTERVAL)
 
 def fetch_json(path):
-    global last_request_refused
-    last_request_refused = False
+    global refused_count
     try:
         conn = http.client.HTTPConnection(HOST_ADDR, HOST_PORT, timeout=0.15)
         conn.request("GET", path, headers={'Accept': 'application/json'})
         response = conn.getresponse()
         data = response.read()
         conn.close()
-        last_request_refused = False
+        refused_count = 0
         raw_text = data.decode('utf-8', errors='replace')
         if DEBUG:
             if path.startswith("/hudmsg"):
@@ -655,11 +661,73 @@ def fetch_json(path):
             parsed = json.loads(raw_text)
         return parsed
     except ConnectionRefusedError:
-        # 8111 沒在聽 = War Thunder 沒開/已關閉 (與單純 timeout 卡頓區分開來)。
-        last_request_refused = True
+        # 8111 沒在聽 = War Thunder 沒開/已關閉 (或卡頓導致 backlog 滿)。
+        # 不在這裡直接設 game_was_off,而是累加計數交給 loop 判斷
+        refused_count += 1
         return None
     except Exception as e:
+        # 單純 timeout 或其他例外,不增加 refused_count
         return None
+
+def fallback_recover_missed_events(damage, nuke_keyword, player_name):
+    """
+    Fallback 備援機制：掃描整場對戰的完整擊殺紀錄 (probe_damage)，
+    尋找任何可能因為卡頓、程式重開或游標亂序而漏抓的擊殺/核彈/死亡事件。
+    透過持久化儲存在 state.json 的 ID 陣列 (matchKillIds 等)，
+    確保即使程式重開也不會發生重複計算(Double Counting)的問題。
+    """
+    recovered = False
+    for entry in damage:
+        eid = entry.get("id")
+        if not isinstance(eid, int):
+            continue
+        msg = entry.get("msg")
+        if not isinstance(msg, str):
+            continue
+
+        # 【備援：核彈事件】
+        if nuke_keyword in msg:
+            if eid not in app_state.setdefault("matchNukeIds", []):
+                app_state["matchNukeIds"].append(eid)
+                app_state["totalNukes"] += 1
+                app_state["todayNukes"] += 1
+                _debug_log(f"id={eid} FALLBACK RECOVERED NUKE | {msg}")
+                recovered = True
+
+        # 【備援：一般擊殺事件】
+        owned = is_owned_kill_event(entry, nuke_keyword, player_name)
+        if owned:
+            if eid not in app_state.setdefault("matchKillIds", []):
+                app_state["matchKillIds"].append(eid)
+                kill_count = 1
+                match = re.search(r'(?:^|\s)(\d+)x\s', msg, re.IGNORECASE)
+                if match:
+                    parsed = int(match.group(1))
+                    if parsed > 0:
+                        kill_count = parsed
+                app_state["totalKills"] = app_state.get("totalKills", 0) + kill_count
+                app_state["todayKills"] = app_state.get("todayKills", 0) + kill_count
+                _debug_log(f"id={eid} FALLBACK RECOVERED KILL: kill_count={kill_count} | {msg}")
+                recovered = True
+                
+        # 【備援：死亡事件】(這裡只負責一般死亡；分體防空的狀態機太複雜，不在此進行備援)
+        victim = extract_victim_name(msg)
+        victim_is_me = (
+            nuke_keyword not in msg
+            and victim is not None
+            and matches_player_name(victim, player_name)
+        )
+        if victim_is_me:
+            split_info = classify_split_spaa(msg, player_name)
+            if not split_info:
+                if eid not in app_state.setdefault("matchDeathIds", []):
+                    app_state["matchDeathIds"].append(eid)
+                    app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
+                    app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
+                    _debug_log(f"id={eid} FALLBACK RECOVERED DEATH | {msg}")
+                    recovered = True
+                    
+    return recovered
 
 def tracker_loop():
     global app_state, last_nuke_time, empty_poll_count, first_poll_done
@@ -691,12 +759,9 @@ def tracker_loop():
 
             hud = fetch_json(f"/hudmsg?lastEvt={last_evt}&lastDmg={last_dmg}")
             if not hud:
-                # === FIX (2026-06-02) ===
-                # 只把「connection refused」(8111 沒在聽 = 遊戲真的關了) 當重置信號。
-                # 單純 timeout 卡頓時遊戲還開著、hudmsg id 連續,**不動 baseline**,
-                # 靠 seen_dmg_ids 去重續算,避免把卡頓期間正在跑的連殺整批當 baseline
-                # 吞掉 — 這是舊版「連續 N 次任意失敗就重 baseline」的漏算根因。
-                if last_request_refused:
+                # 連續 refused 超過門檻 (HUD_FAIL_RESET_THRESHOLD),才認定遊戲真的關閉。
+                # 避免單次 backlog 滿的 refused 導致誤重置 baseline 而吞掉連殺。
+                if refused_count >= HUD_FAIL_RESET_THRESHOLD:
                     game_was_off = True
                 time.sleep(POLL_INTERVAL)
                 continue
@@ -707,6 +772,9 @@ def tracker_loop():
             # 把新擊殺誤判成「看過」而漏算。所以清掉去重狀態 + 強制重新 baseline 一次,
             # 對齊新 session。同場 timeout 卡頓不會走到這裡 (那條路徑不重置)。
             if game_was_off:
+                app_state["matchKillIds"] = []
+                app_state["matchNukeIds"] = []
+                app_state["matchDeathIds"] = []
                 seen_dmg_ids.clear()
                 del seen_dmg_order[:]
                 split_spaa_state.clear()
@@ -774,22 +842,26 @@ def tracker_loop():
 
                         if nuke_keyword in msg:
                             if not nuke_triggered:
-                                app_state["totalNukes"] += 1
-                                app_state["todayNukes"] += 1
+                                if eid not in app_state.setdefault("matchNukeIds", []):
+                                    app_state["matchNukeIds"].append(eid)
+                                    app_state["totalNukes"] += 1
+                                    app_state["todayNukes"] += 1
                                 nuke_triggered = True
                                 last_nuke_time = now
 
                         owned = is_owned_kill_event(entry, nuke_keyword, player_name)
                         if owned:
-                            kill_count = 1
-                            match = re.search(r'(?:^|\s)(\d+)x\s', msg, re.IGNORECASE)
-                            if match:
-                                parsed = int(match.group(1))
-                                if parsed > 0:
-                                    kill_count = parsed
+                            if eid not in app_state.setdefault("matchKillIds", []):
+                                app_state["matchKillIds"].append(eid)
+                                kill_count = 1
+                                match = re.search(r'(?:^|\s)(\d+)x\s', msg, re.IGNORECASE)
+                                if match:
+                                    parsed = int(match.group(1))
+                                    if parsed > 0:
+                                        kill_count = parsed
 
-                            app_state["totalKills"] = app_state.get("totalKills", 0) + kill_count
-                            app_state["todayKills"] = app_state.get("todayKills", 0) + kill_count
+                                app_state["totalKills"] = app_state.get("totalKills", 0) + kill_count
+                                app_state["todayKills"] = app_state.get("todayKills", 0) + kill_count
 
                         # === 分體防空死亡計數 (2026-05-30) ===
                         # 一套分體防空被打掉會噴 2~3 行 (雷達車 + 2 發射車各一行),
@@ -812,8 +884,14 @@ def tracker_loop():
                             died = is_owned_death_event(entry, nuke_keyword, player_name, ignored_death_keywords)
 
                         if died:
-                            app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
-                            app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
+                            if not split_info:
+                                if eid not in app_state.setdefault("matchDeathIds", []):
+                                    app_state["matchDeathIds"].append(eid)
+                                    app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
+                                    app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
+                            else:
+                                app_state["totalDeaths"] = app_state.get("totalDeaths", 0) + 1
+                                app_state["todayDeaths"] = app_state.get("todayDeaths", 0) + 1
 
                         if DEBUG:
                             _debug_log(
@@ -835,13 +913,24 @@ def tracker_loop():
                         (e.get("id", 0) for e in probe_damage if isinstance(e.get("id"), int)),
                         default=0,
                     )
-                    if probe_max_id > 0 and probe_max_id + DMG_REFETCH_MARGIN < current_last_dmg:
+                    # (2026-06-03 修改: 修正當 current_last_dmg 很小(例如30)時,
+                    #  probe_max_id + 40 < 30 永遠不成立導致無法偵測到換場的問題。
+                    #  只要 probe_max_id < current_last_dmg 就絕對是換場 ID rewind。)
+                    if probe_max_id > 0 and (probe_max_id < current_last_dmg or probe_max_id + DMG_REFETCH_MARGIN < current_last_dmg):
                         _reset_damage_session_to_existing_feed(probe_damage, probe_max_id)
                         first_poll_done = True
                         save_state(app_state)
                     elif current_last_dmg > 10000:
                         app_state["lastDmg"] = 0
                         save_state(app_state)
+                        
+                    # === FALLBACK CHECK (漏抓備援機制) ===
+                    # 每次背景閒置觸發 probe (抓取整場完整紀錄) 時，呼叫備援函數。
+                    # 如果有成功補回任何漏掉的擊殺，就立即存檔更新畫面。
+                    if not is_cached_test_drive_active() and probe_damage:
+                        if fallback_recover_missed_events(probe_damage, nuke_keyword, player_name):
+                            save_state(app_state)
+                            
                     empty_poll_count = 0
 
         except Exception as e:
