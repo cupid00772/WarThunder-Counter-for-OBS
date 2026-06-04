@@ -339,6 +339,28 @@ def normalize_text(text):
 def matches_player_name(name, player_name):
     return normalize_text(player_name) in normalize_text(name)
 
+def is_my_nuke_event(msg, nuke_keyword, player_name):
+    if not isinstance(msg, str):
+        return False
+    if nuke_keyword in msg:
+        return True
+    
+    lower_msg = msg.lower()
+    nuke_action_phrases = [
+        "used nuclear weapons",
+        "核武器",
+        "ядерн",
+        "atomwaffen",
+        "arme nucléaire",
+        "armas nucleares",
+    ]
+    if any(phrase in lower_msg for phrase in nuke_action_phrases):
+        if matches_player_name(msg, player_name):
+            return True
+        return False
+        
+    return False
+
 def extract_killer_name(msg):
     for keyword in ACTION_KEYWORDS:
         idx = msg.find(keyword)
@@ -376,7 +398,7 @@ def is_owned_kill_event(entry, nuke_keyword, player_name):
     msg = entry.get("msg")
     if not isinstance(msg, str):
         return False
-    if nuke_keyword in msg:
+    if is_my_nuke_event(msg, nuke_keyword, player_name):
         return False
     if "has been wrecked" in msg or "has crashed" in msg:
         return False
@@ -399,7 +421,7 @@ def is_owned_death_event(entry, nuke_keyword, player_name, ignored_keywords=None
     msg = entry.get("msg")
     if not isinstance(msg, str):
         return False
-    if nuke_keyword in msg:
+    if is_my_nuke_event(msg, nuke_keyword, player_name):
         return False
 
     normalized_msg = msg.lower()
@@ -696,7 +718,7 @@ def fallback_recover_missed_events(damage, nuke_keyword, player_name, ignored_de
             continue
 
         # 【備援：核彈事件】
-        if nuke_keyword in msg:
+        if is_my_nuke_event(msg, nuke_keyword, player_name):
             if eid not in app_state.setdefault("matchNukeIds", []):
                 app_state["matchNukeIds"].append(eid)
                 app_state["totalNukes"] += 1
@@ -871,7 +893,7 @@ def tracker_loop():
                             
                         new_events_found = True
 
-                        if nuke_keyword in msg:
+                        if is_my_nuke_event(msg, nuke_keyword, player_name):
                             if not nuke_triggered:
                                 if eid not in app_state.setdefault("matchNukeIds", []):
                                     app_state["matchNukeIds"].append(eid)
@@ -909,7 +931,7 @@ def tracker_loop():
                         died = False
                         victim = extract_victim_name(msg)
                         victim_is_me = (
-                            nuke_keyword not in msg
+                            not is_my_nuke_event(msg, nuke_keyword, player_name)
                             and victim is not None
                             and matches_player_name(victim, player_name)
                         )
